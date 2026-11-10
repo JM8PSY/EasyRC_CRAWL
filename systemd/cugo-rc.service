@@ -12,6 +12,7 @@ WorkingDirectory=/home/pi/EasyRC_CRAWL
 ExecStart=/home/pi/EasyRC_CRAWL/.venv/bin/python -m cugo_rc.server --config config.yaml
 Restart=on-failure
 RestartSec=2
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target

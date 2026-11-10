@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from cugo_rc.camera import Camera
 from cugo_rc.config import CameraConfig, MotorConfig, default_config
 from cugo_rc.motor import MockBackend, MotorController
-from cugo_rc.server import create_app
+from cugo_rc.server import TAKEOVER_S, create_app, make_uvicorn_config
 
 
 @pytest.fixture
@@ -105,4 +105,72 @@ def test_status_reports_camera_down(motor):
 def test_shutdown_closes_motor(app, backend):
     with TestClient(app):
         pass
+    assert backend.closed
+
+
+class FlakyBackend(MockBackend):
+    """set_pwm を1回だけ失敗させられるバックエンド（pigpio の一時的なエラー相当）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.fail_next = False
+
+    def set_pwm(self, pin, freq, duty):
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("pigpio glitch")
+        super().set_pwm(pin, freq, duty)
+
+
+def test_control_loop_survives_tick_error_and_stops():
+    backend = FlakyBackend()
+    motor = MotorController(MotorConfig(), backend)
+    cam = Camera(CameraConfig(width=160, height=120), mock=True)
+    with TestClient(create_app(default_config(), motor, cam)) as c:
+        with c.websocket_connect("/ws") as ws:
+            ws.receive_json()
+            ws.send_json({"l": 1, "r": 1})
+            assert wait_until(lambda: motor.current[0] > 0.1)
+            backend.fail_next = True
+            assert wait_until(lambda: motor.current == (0.0, 0.0) and backend.duty == {12: 0.0, 13: 0.0})
+            for _ in range(5):  # 制御ループが生きていれば再び加速する
+                ws.send_json({"l": 0.3, "r": 0.3})
+                time.sleep(0.05)
+            assert wait_until(lambda: motor.current[0] > 0.1)
+
+
+def test_stale_driver_is_taken_over(client, motor):
+    with client.websocket_connect("/ws") as old:
+        old.receive_json()
+        old.send_json({"l": 1, "r": 1})
+        assert wait_until(lambda: motor.target == (1, 1))
+        time.sleep(TAKEOVER_S + 0.2)  # 旧操縦者は無言（半開きの接続を想定）
+        with client.websocket_connect("/ws") as new:
+            assert new.receive_json() == {"role": "driver"}
+            new.send_json({"l": 0.4, "r": 0.4})
+            assert wait_until(lambda: motor.target == (0.4, 0.4))
+
+
+def test_shutdown_completes_with_open_video_stream(app, backend):
+    import socket
+    import threading
+
+    import uvicorn
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    ucfg = make_uvicorn_config(app, default_config())
+    ucfg.host, ucfg.port = "127.0.0.1", port
+    server = uvicorn.Server(ucfg)
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    assert wait_until(lambda: server.started, timeout=10)
+    viewer = socket.create_connection(("127.0.0.1", port))
+    viewer.sendall(b"GET /video HTTP/1.1\r\nHost: x\r\n\r\n")
+    assert b"--frame" in viewer.recv(4096) + viewer.recv(4096)
+    server.should_exit = True  # Ctrl+C / SIGTERM 相当
+    t.join(timeout=10)
+    viewer.close()
+    assert not t.is_alive()
     assert backend.closed

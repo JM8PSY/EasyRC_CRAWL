@@ -25,18 +25,29 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 CONTROL_HZ = 50
+# 操縦者がこの秒数以上無言なら、新しい接続が操縦権を引き継ぐ（Wi-Fi 断で残った半開き接続対策）
+TAKEOVER_S = 1.0
+# 終了時、開いたままの接続（/video など）を待つ上限 [s]
+SHUTDOWN_GRACE_S = 2
 
 
 def create_app(cfg: Config, motor: MotorController, camera: Camera) -> FastAPI:
     watchdog = Watchdog(cfg.watchdog.timeout_ms / 1000, motor.stop)
-    driver: dict[str, WebSocket | None] = {"ws": None}
+    driver: dict = {"ws": None, "last": 0.0}
 
     async def control_loop() -> None:
         last = time.monotonic()
         while True:
             await asyncio.sleep(1 / CONTROL_HZ)
             now = time.monotonic()
-            motor.tick(now - last)
+            try:
+                motor.tick(now - last)
+            except Exception:
+                log.exception("モーター出力に失敗したため停止します")
+                try:
+                    motor.stop()
+                except Exception:
+                    log.exception("停止にも失敗しました")
             last = now
 
     @asynccontextmanager
@@ -69,42 +80,69 @@ def create_app(cfg: Config, motor: MotorController, camera: Camera) -> FastAPI:
     async def status() -> dict:
         return {"camera": camera.ok, "driver_connected": driver["ws"] is not None}
 
-    def handle(text: str) -> None:
+    def handle(text: str) -> bool:
+        """指令を処理し、有効な指令だったら True を返す。"""
         try:
             msg = json.loads(text)
             if not isinstance(msg, dict):
                 raise ValueError("JSON オブジェクトではありません")
             if msg.get("stop") is True:
                 motor.stop()
-                return
+                return True
             motor.set_target(msg["l"], msg["r"])
         except (ValueError, KeyError) as e:
             log.warning("不正な指令を無視しました: %r (%s)", text[:100], e)
-            return
+            return False
         watchdog.feed()
+        return True
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket) -> None:
         await ws.accept()
-        is_driver = driver["ws"] is None
-        if is_driver:
-            driver["ws"] = ws
+        stale = driver["ws"]
+        if stale is not None and time.monotonic() - driver["last"] <= TAKEOVER_S:
+            stale = None
+        if driver["ws"] is None or stale is not None:
+            # await を挟まずに操縦権を確定させる
+            driver["ws"], driver["last"] = ws, time.monotonic()
+            if stale is not None:
+                motor.stop()
+                log.warning("応答のない操縦者から操縦権を引き継ぎました")
             log.info("操縦者が接続しました")
+        is_driver = driver["ws"] is ws
         try:
+            if stale is not None:
+                try:
+                    await asyncio.wait_for(stale.close(code=4000), timeout=1)
+                except Exception:
+                    pass
             await ws.send_json({"role": "driver" if is_driver else "viewer"})
             while True:
                 text = await ws.receive_text()
-                if is_driver:
-                    handle(text)
+                if driver["ws"] is ws and handle(text):
+                    driver["last"] = time.monotonic()
         except WebSocketDisconnect:
             pass
         finally:
-            if is_driver:
+            if driver["ws"] is ws:
                 motor.stop()
                 driver["ws"] = None
                 log.info("操縦者が切断したため停止しました")
 
     return app
+
+
+def make_uvicorn_config(app: FastAPI, cfg: Config):
+    import uvicorn
+
+    return uvicorn.Config(
+        app,
+        host=cfg.server.host,
+        port=cfg.server.port,
+        timeout_graceful_shutdown=SHUTDOWN_GRACE_S,
+        ws_ping_interval=5,
+        ws_ping_timeout=5,
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -133,7 +171,7 @@ def main(argv: list[str] | None = None) -> None:
 
     atexit.register(safe_stop)
     camera = Camera(cfg.camera, mock=args.mock)
-    uvicorn.run(create_app(cfg, motor, camera), host=cfg.server.host, port=cfg.server.port)
+    uvicorn.Server(make_uvicorn_config(create_app(cfg, motor, camera), cfg)).run()
 
 
 if __name__ == "__main__":
