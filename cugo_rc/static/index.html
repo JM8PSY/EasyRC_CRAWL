@@ -1,1 +1,35 @@
-<!doctype html><title>CuGo RC</title>
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>CuGo RC</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <span class="title">CuGo RC</span>
+    <span id="conn" class="badge off">切断</span>
+    <span id="role" class="badge"></span>
+    <span id="values" class="values">L 0.00 / R 0.00</span>
+  </header>
+
+  <main>
+    <div class="video-wrap">
+      <img id="video" src="/video" alt="カメラ映像">
+      <div id="cam-warn" class="cam-warn" hidden>映像なし（カメラを確認してください）</div>
+    </div>
+  </main>
+
+  <section class="controls">
+    <button id="stop" class="stop" type="button">停止<br><small>Space</small></button>
+    <div class="help">
+      <b>W/S</b> 前進/後退　<b>A/D</b> 旋回<br>
+      <b>Shift</b> 低速　<b>Space</b> 停止
+    </div>
+    <div id="joy" class="joy"><div id="knob" class="knob"></div></div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
