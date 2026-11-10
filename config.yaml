@@ -1,0 +1,17 @@
+motor:
+  left:  { pwm_pin: 12, dir_pin: 5, invert: false }
+  right: { pwm_pin: 13, dir_pin: 6, invert: true }
+  pwm_freq: 20000
+  max_speed: 1.0        # 0.0〜1.0。出力デューティの上限
+  max_accel: 2.0        # 1秒あたりの速度変化量の上限
+watchdog:
+  timeout_ms: 300
+camera:
+  device: 0
+  width: 640
+  height: 480
+  fps: 15
+  jpeg_quality: 70
+server:
+  host: 0.0.0.0
+  port: 8000

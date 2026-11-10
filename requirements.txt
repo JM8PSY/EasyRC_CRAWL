@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pyyaml
+numpy
+opencv-python-headless
+pigpio
