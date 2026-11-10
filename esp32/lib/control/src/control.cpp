@@ -52,12 +52,22 @@ const StepDef kStepDefs[SelfTest::kSteps] = {
 
 bool Motion::setTarget(float l, float r) {
   if (!std::isfinite(l) || !std::isfinite(r)) return false;
-  tgtL_ = clampUnit(l) * maxSpeed_;
-  tgtR_ = clampUnit(r) * maxSpeed_;
+  rawL_ = clampUnit(l);
+  rawR_ = clampUnit(r);
+  tgtL_ = rawL_ * maxSpeed_;
+  tgtR_ = rawR_ * maxSpeed_;
   return true;
 }
 
-void Motion::stop() { tgtL_ = tgtR_ = curL_ = curR_ = 0.0f; }
+bool Motion::setMaxSpeed(float v) {
+  if (!std::isfinite(v) || v < 0.0f || v > 1.0f) return false;
+  maxSpeed_ = v;
+  tgtL_ = rawL_ * maxSpeed_;
+  tgtR_ = rawR_ * maxSpeed_;
+  return true;
+}
+
+void Motion::stop() { rawL_ = rawR_ = tgtL_ = tgtR_ = curL_ = curR_ = 0.0f; }
 
 void Motion::tick(float dt) {
   if (!(dt > 0.0f)) return;
@@ -94,11 +104,15 @@ bool DriverArbiter::onDisconnect(uint8_t id) {
 }
 
 Command parseCommand(const char* text) {
-  Command c{CommandType::Invalid, 0.0f, 0.0f};
+  Command c{CommandType::Invalid, 0.0f, 0.0f, 0.0f};
   if (!text) return c;
   const char* stop = findValue(text, "\"stop\"");
   if (stop && std::strncmp(stop, "true", 4) == 0) {
     c.type = CommandType::Stop;
+    return c;
+  }
+  if (const char* max = findValue(text, "\"max\"")) {
+    if (parseNumber(max, &c.value)) c.type = CommandType::SetMax;
     return c;
   }
   if (!parseNumber(findValue(text, "\"l\""), &c.l) || !parseNumber(findValue(text, "\"r\""), &c.r)) {

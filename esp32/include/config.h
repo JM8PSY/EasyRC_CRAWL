@@ -29,7 +29,9 @@ constexpr bool RIGHT_INVERT = true;  // 前進で逆転する場合は切り替�
 constexpr uint32_t PWM_FREQ_HZ = 20000;  // MD20A の上限 20kHz
 constexpr uint8_t PWM_BITS = 10;         // 20kHz では 10bit (0〜1023) まで
 
-constexpr float MAX_SPEED = 1.0f;  // 出力デューティの上限 (0〜1)
+// 出力デューティの上限 (0〜1) の初期値。Web 画面のスライダーで変更でき、変更後の値は本体に保存される
+constexpr float MAX_SPEED = 1.0f;
+constexpr float MIN_MAX_SPEED = 0.05f;  // スライダーで設定できる上限の最小値
 constexpr float MAX_ACCEL = 2.0f;  // 1 秒あたりの速度変化量の上限
 
 // ---- 安全 ----
