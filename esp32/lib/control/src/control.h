@@ -18,7 +18,10 @@ class Motion {
   // 加速度制限を無視して即座に 0
   void stop();
   void tick(float dt);
+  // 出力上限 (0〜1) を変更し、現在の目標にも即座に反映する。範囲外・非有限値は false
+  bool setMaxSpeed(float v);
 
+  float maxSpeed() const { return maxSpeed_; }
   float left() const { return curL_; }
   float right() const { return curR_; }
   float targetLeft() const { return tgtL_; }
@@ -27,6 +30,7 @@ class Motion {
  private:
   float maxSpeed_;
   float maxAccel_;
+  float rawL_ = 0, rawR_ = 0;  // 上限を掛ける前の入力
   float tgtL_ = 0, tgtR_ = 0;
   float curL_ = 0, curR_ = 0;
 };
@@ -78,13 +82,14 @@ class DriverArbiter {
   uint32_t last_ = 0;
 };
 
-enum class CommandType { Invalid, Stop, Drive };
+enum class CommandType { Invalid, Stop, Drive, SetMax };
 struct Command {
   CommandType type;
   float l;
   float r;
+  float value;  // SetMax の値
 };
-// {"l":0.5,"r":-0.5} / {"stop":true} を解釈する
+// {"l":0.5,"r":-0.5} / {"stop":true} / {"max":0.5} を解釈する
 Command parseCommand(const char* text);
 
 // 一人で確認するための動作テスト。待ち時間のあと左右を順に動かす

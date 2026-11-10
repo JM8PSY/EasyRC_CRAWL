@@ -1,6 +1,7 @@
 // CuGo V3 Wi-Fi 遠隔操縦（ESP32 + Cytron MD20A ×2）
 #include <Arduino.h>
 #include <ESPmDNS.h>
+#include <Preferences.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <WiFi.h>
@@ -20,6 +21,7 @@ constexpr size_t MAX_MESSAGE = 128;
 
 WebServer http(80);
 WebSocketsServer ws(81);
+Preferences prefs;  // 出力上限の保存先（NVS）
 
 Motion motion(MAX_SPEED, MAX_ACCEL);
 Watchdog watchdog(WATCHDOG_MS);
@@ -93,8 +95,27 @@ void reportSelfTest(uint32_t now) {
 }
 
 // ---- WebSocket ----
-void sendRole(uint8_t id, Role role) {
-  ws.sendTXT(id, role == Role::Driver ? "{\"role\":\"driver\"}" : "{\"role\":\"viewer\"}");
+void sendHello(uint8_t id, Role role) {
+  char msg[64];
+  snprintf(msg, sizeof(msg), "{\"role\":\"%s\",\"max\":%.2f}", role == Role::Driver ? "driver" : "viewer",
+           motion.maxSpeed());
+  ws.sendTXT(id, msg);
+}
+
+void broadcastMax() {
+  char msg[32];
+  snprintf(msg, sizeof(msg), "{\"max\":%.2f}", motion.maxSpeed());
+  ws.broadcastTXT(msg);
+}
+
+void setMaxSpeed(float v) {
+  if (v < MIN_MAX_SPEED || !motion.setMaxSpeed(v)) {
+    Serial.printf("[警告] 出力上限 %.3f は範囲外のため無視しました\n", v);
+  } else {
+    prefs.putFloat("max", motion.maxSpeed());
+    Serial.printf("[設定] 出力上限 %.0f%%\n", motion.maxSpeed() * 100);
+  }
+  broadcastMax();  // 無視した場合も現在値を送り、画面のスライダーを戻す
 }
 
 void handleMessage(uint8_t id, const uint8_t* payload, size_t length) {
@@ -113,6 +134,9 @@ void handleMessage(uint8_t id, const uint8_t* payload, size_t length) {
     case CommandType::Drive:
       // テスト中はブラウザからの走行指令を無視する（停止は受け付ける）
       if (!selfTest.active()) motion.setTarget(cmd.l, cmd.r);
+      break;
+    case CommandType::SetMax:
+      setMaxSpeed(cmd.value);
       break;
     case CommandType::Invalid:
       Serial.printf("[警告] 不正な指令を無視しました: %.60s\n", buf);
@@ -133,7 +157,7 @@ void onWsEvent(uint8_t id, WStype_t type, uint8_t* payload, size_t length) {
       }
       if (role == Role::Driver) Serial.printf("[接続] 操縦者 #%u\n", id);
       else Serial.printf("[接続] 閲覧のみ #%u\n", id);
-      sendRole(id, role);
+      sendHello(id, role);
       break;
     }
     case WStype_DISCONNECTED:
@@ -208,9 +232,9 @@ void pollButton(uint32_t now) {
 }
 
 void printStatus() {
-  Serial.printf("[状態] L %+.2f / R %+.2f  目標 L %+.2f / R %+.2f  操縦者 %s  テスト %s\n", motion.left(),
-                motion.right(), motion.targetLeft(), motion.targetRight(), arbiter.hasDriver() ? "あり" : "なし",
-                selfTest.active() ? "実行中" : "なし");
+  Serial.printf("[状態] L %+.2f / R %+.2f  目標 L %+.2f / R %+.2f  上限 %.0f%%  操縦者 %s  テスト %s\n",
+                motion.left(), motion.right(), motion.targetLeft(), motion.targetRight(), motion.maxSpeed() * 100,
+                arbiter.hasDriver() ? "あり" : "なし", selfTest.active() ? "実行中" : "なし");
 }
 
 void pollSerial() {
@@ -267,6 +291,11 @@ void setup() {
   Serial.println("=== CuGo RC (ESP32) ===");
   Serial.printf("左: PWM=GPIO%d DIR=GPIO%d  右: PWM=GPIO%d DIR=GPIO%d  PWM %luHz\n", LEFT_PWM_PIN, LEFT_DIR_PIN,
                 RIGHT_PWM_PIN, RIGHT_DIR_PIN, static_cast<unsigned long>(PWM_FREQ_HZ));
+
+  prefs.begin("cugo", false);
+  float savedMax = prefs.isKey("max") ? prefs.getFloat("max", MAX_SPEED) : MAX_SPEED;
+  if (savedMax < MIN_MAX_SPEED || !motion.setMaxSpeed(savedMax)) motion.setMaxSpeed(MAX_SPEED);
+  Serial.printf("出力上限 %.0f%%（Web 画面で変更できます）\n", motion.maxSpeed() * 100);
 
   setupWifi();
   setupHttp();

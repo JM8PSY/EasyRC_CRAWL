@@ -11,6 +11,8 @@ const $ = (id) => document.getElementById(id);
 let ws = null;
 let role = null;
 let sending = !document.hidden;
+let maxSpeed = 1; // ESP32 から受け取った出力上限 (0〜1)
+let draggingMax = false;
 const keys = new Set();
 const joy = { active: false, fwd: 0, turn: 0 };
 
@@ -57,6 +59,18 @@ function setMeter(side, v) {
   $("val-" + side).textContent = v.toFixed(2);
 }
 
+function showMax(percent) {
+  $("max-val").textContent = `${percent}%`;
+}
+
+function applyMax(v) {
+  maxSpeed = v;
+  if (draggingMax) return; // 操作中のスライダーは動かさない
+  const percent = Math.round(v * 100);
+  $("max").value = percent;
+  showMax(percent);
+}
+
 function setConn(text, cls) {
   const el = $("conn");
   el.textContent = text;
@@ -81,6 +95,7 @@ function connect() {
       $("role").className = "badge " + (role === "driver" ? "ok" : "warn");
       document.body.classList.toggle("viewer", role !== "driver");
     }
+    if (typeof msg.max === "number") applyMax(msg.max);
   };
   ws.onclose = () => {
     role = null;
@@ -93,10 +108,23 @@ function connect() {
 
 setInterval(() => {
   const [l, r] = currentInput();
-  setMeter("l", l);
-  setMeter("r", r);
+  // バーは実際の duty（入力 × 出力上限）を表示する
+  setMeter("l", l * maxSpeed);
+  setMeter("r", r * maxSpeed);
   if (sending) send({ l, r });
 }, SEND_INTERVAL_MS);
+
+// ---- 出力上限スライダー ----
+$("max").addEventListener("input", (e) => {
+  draggingMax = true;
+  showMax(e.target.value);
+});
+// 指を離したときだけ送る（本体への保存回数を抑える）
+$("max").addEventListener("change", (e) => {
+  draggingMax = false;
+  send({ max: Number(e.target.value) / 100 });
+  e.target.blur(); // キーボード操作（WASD）に戻す
+});
 
 // ---- キーボード ----
 const KEY_MAP = { w: "w", a: "a", s: "s", d: "d", shift: "shift" };

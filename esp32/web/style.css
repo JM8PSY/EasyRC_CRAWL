@@ -73,6 +73,17 @@ main { flex: 1; min-height: 0; display: flex; justify-content: center; align-ite
 .bar.rev { bottom: auto; top: 50%; background: var(--warn); }
 .label { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
 
+.limit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.limit input { flex: 1; min-width: 0; accent-color: #58a6ff; height: 28px; }
+.limit-val { width: 3.5em; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+
 .controls {
   display: flex;
   align-items: center;
@@ -117,7 +128,7 @@ main { flex: 1; min-height: 0; display: flex; justify-content: center; align-ite
   pointer-events: none;
 }
 
-body.viewer .controls { opacity: 0.35; pointer-events: none; }
+body.viewer .controls, body.viewer .limit { opacity: 0.35; pointer-events: none; }
 
 @media (max-width: 480px) {
   .help { display: none; }

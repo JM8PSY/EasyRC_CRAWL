@@ -48,6 +48,19 @@ static void test_motion_rejects_non_finite_and_stop_is_immediate() {
   NEAR(m.targetLeft(), 0.0f);
 }
 
+static void test_motion_set_max_speed_rescales_target() {
+  Motion m(1.0f, 2.0f);
+  m.setTarget(0.5f, -1.0f);
+  CHECK(m.setMaxSpeed(0.4f));
+  NEAR(m.maxSpeed(), 0.4f);
+  NEAR(m.targetLeft(), 0.2f);  // 走行中に変えても即座に新しい上限が効く
+  NEAR(m.targetRight(), -0.4f);
+  CHECK(!m.setMaxSpeed(NAN));
+  CHECK(!m.setMaxSpeed(-0.1f));
+  CHECK(!m.setMaxSpeed(1.1f));
+  NEAR(m.maxSpeed(), 0.4f);
+}
+
 static void test_side_output() {
   SideOutput o = toSideOutput(0.5f, false);
   NEAR(o.duty, 0.5f);
@@ -114,6 +127,10 @@ static void test_parse_command() {
   CHECK(parseCommand("{\"l\":\"x\",\"r\":0}").type == CommandType::Invalid);
   CHECK(parseCommand("{\"l\":nan,\"r\":0}").type == CommandType::Invalid);
   CHECK(parseCommand("{\"l\":1e999,\"r\":0}").type == CommandType::Invalid);
+  c = parseCommand("{\"max\":0.45}");
+  CHECK(c.type == CommandType::SetMax);
+  NEAR(c.value, 0.45f);
+  CHECK(parseCommand("{\"max\":\"x\"}").type == CommandType::Invalid);
   CHECK(parseCommand("").type == CommandType::Invalid);
   CHECK(parseCommand(nullptr).type == CommandType::Invalid);
 }
@@ -160,6 +177,7 @@ int main() {
   test_motion_ramps_with_accel_limit();
   test_motion_caps_dt_and_clamps();
   test_motion_rejects_non_finite_and_stop_is_immediate();
+  test_motion_set_max_speed_rescales_target();
   test_side_output();
   test_watchdog();
   test_arbiter_first_is_driver_others_viewer();
