@@ -7,6 +7,8 @@ Raspberry Pi 4 から Cytron MD20A ×2 を PWM + DIR で駆動し、同一LAN内
 
 設計: [docs/superpowers/specs/2026-11-10-cugo-webrc-design.md](docs/superpowers/specs/2026-11-10-cugo-webrc-design.md)
 
+**ESP32 版（カメラなし・Wi-Fi 操縦）は [esp32/README.md](esp32/README.md) を参照してください。**
+
 ## 配線
 
 | 信号 | Pi 4 GPIO (BCM) | ピン番号 |
