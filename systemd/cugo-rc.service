@@ -1,0 +1,18 @@
+# CuGo V3 Web遠隔操縦サーバー
+# WorkingDirectory / ExecStart のパスと User は環境に合わせて変更してください。
+[Unit]
+Description=CuGo V3 Web Remote Control
+After=network-online.target pigpiod.service
+Wants=network-online.target pigpiod.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/EasyRC_CRAWL
+ExecStart=/home/pi/EasyRC_CRAWL/.venv/bin/python -m cugo_rc.server --config config.yaml
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
