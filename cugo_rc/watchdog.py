@@ -36,16 +36,19 @@ class Watchdog:
                 return False
             self._armed = False
         log.warning("指令が %.0fms 途絶えたため停止します", self._timeout_s * 1000)
-        self._on_timeout()
+        try:
+            self._on_timeout()
+        except Exception:
+            log.exception("停止処理に失敗しました。次回の check で再試行します")
+            with self._lock:
+                self._armed = True
+            return False
         return True
 
     def start(self, interval_s: float = 0.02) -> None:
         def run() -> None:
             while not self._stop_event.wait(interval_s):
-                try:
-                    self.check()
-                except Exception:
-                    log.exception("watchdog の停止処理で例外が発生しました")
+                self.check()
 
         self._thread = threading.Thread(target=run, name="watchdog", daemon=True)
         self._thread.start()

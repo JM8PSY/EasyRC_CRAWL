@@ -48,3 +48,19 @@ def test_thread_fires_with_real_clock():
     w.feed()
     assert ev.wait(1.0)
     w.shutdown()
+
+
+def test_failed_stop_is_retried():
+    clk, calls = FakeClock(), []
+
+    def on_timeout():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("pigpio glitch")
+
+    w = Watchdog(0.3, on_timeout, clock=clk)
+    w.feed()
+    clk.t = 0.31
+    assert w.check() is False
+    assert w.check() is True
+    assert calls == [1, 1]

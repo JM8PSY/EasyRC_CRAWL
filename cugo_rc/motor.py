@@ -7,6 +7,10 @@ import threading
 from .config import MotorConfig, MotorSide
 
 
+# 制御ループが停滞した後でも1回の tick で進める時間の上限 [s]（加速度制限の飛び越し防止）
+MAX_TICK_DT = 0.1
+
+
 class BackendError(RuntimeError):
     pass
 
@@ -105,7 +109,7 @@ class MotorController:
             self._target = (_clamp(l) * s, _clamp(r) * s)
 
     def tick(self, dt: float) -> tuple[float, float]:
-        step = self._cfg.max_accel * dt
+        step = self._cfg.max_accel * min(dt, MAX_TICK_DT)
         with self._lock:
             self._current = (
                 _approach(self._current[0], self._target[0], step),

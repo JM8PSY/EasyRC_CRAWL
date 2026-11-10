@@ -28,3 +28,22 @@ def test_unknown_key_raises(tmp_path):
     p.write_text("motor:\n  max_sped: 0.5\n")
     with pytest.raises(ValueError):
         load_config(str(p))
+
+
+@pytest.mark.parametrize(
+    "yaml_text",
+    [
+        "motor:\n  max_speed: 1.5\n",
+        "motor:\n  max_speed: '1'\n",
+        "motor:\n  max_accel: 0\n",
+        "watchdog:\n  timeout_ms: 0\n",
+        "motor:\n  left:\n    invert: 'false'\n",
+        "motor:\n  left:\n    pwm_pin: 14\n",
+        "motor:\n  right:\n    pwm_pin: 18\n",  # 左 GPIO12 と同じ PWM0 チャンネル
+    ],
+)
+def test_invalid_values_raise(tmp_path, yaml_text):
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml_text)
+    with pytest.raises(ValueError):
+        load_config(str(p))

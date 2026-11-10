@@ -68,3 +68,9 @@ def test_close():
     m, b = make()
     m.close()
     assert b.closed and b.duty == {12: 0.0, 13: 0.0}
+
+
+def test_tick_dt_is_capped_after_stall():
+    m, b = make(max_accel=2.0)
+    m.set_target(1.0, -1.0)
+    assert m.tick(1.0) == pytest.approx((0.2, -0.2))  # 1秒停滞しても 0.1秒分しか進まない
