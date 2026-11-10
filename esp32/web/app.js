@@ -5,6 +5,13 @@ const SEND_INTERVAL_MS = 50;
 const RECONNECT_MS = 1000;
 const TURN_KEY = 0.6;
 const SLOW_FACTOR = 0.4;
+// ESP32 のモード → [表示, バッジの色]
+const MODES = {
+  I: ["待機", "off"],
+  A: ["自律", "auto"],
+  M: ["手動", "ok"],
+  X: ["テスト", "warn"],
+};
 
 const $ = (id) => document.getElementById(id);
 
@@ -71,6 +78,13 @@ function applyMax(v) {
   showMax(percent);
 }
 
+function setMode(mode) {
+  const el = $("mode");
+  const m = MODES[mode];
+  el.textContent = m ? m[0] : "";
+  el.className = "badge " + (m ? m[1] : "");
+}
+
 function setConn(text, cls) {
   const el = $("conn");
   el.textContent = text;
@@ -94,13 +108,18 @@ function connect() {
       $("role").textContent = role === "driver" ? "操縦者" : "閲覧のみ（他の端末が操縦中）";
       $("role").className = "badge " + (role === "driver" ? "ok" : "warn");
       document.body.classList.toggle("viewer", role !== "driver");
+      $("auto").disabled = role !== "driver";
     }
     if (typeof msg.max === "number") applyMax(msg.max);
+    if (typeof msg.mode === "string") setMode(msg.mode);
+    if (typeof msg.auto === "boolean") $("auto").checked = msg.auto;
   };
   ws.onclose = () => {
     role = null;
     setConn("切断", "off");
     $("role").textContent = "";
+    setMode(null);
+    $("auto").disabled = true;
     resetInput();
     setTimeout(connect, RECONNECT_MS);
   };
@@ -123,6 +142,12 @@ $("max").addEventListener("input", (e) => {
 $("max").addEventListener("change", (e) => {
   draggingMax = false;
   send({ max: Number(e.target.value) / 100 });
+  e.target.blur(); // キーボード操作（WASD）に戻す
+});
+
+// ---- 自律走行の許可（操縦者のみ）----
+$("auto").addEventListener("change", (e) => {
+  send({ auto: e.target.checked });
   e.target.blur(); // キーボード操作（WASD）に戻す
 });
 

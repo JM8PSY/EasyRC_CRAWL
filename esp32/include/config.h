@@ -1,6 +1,7 @@
 // 設定。変更したら再ビルドして書き込む（pio run -t upload）
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // ---- Wi-Fi ----
@@ -38,6 +39,14 @@ constexpr float MAX_ACCEL = 2.0f;  // 1 秒あたりの速度変化量の上限
 constexpr uint32_t WATCHDOG_MS = 300;   // 指令がこの時間途絶えたら停止
 constexpr uint32_t TAKEOVER_MS = 1000;  // 操縦者がこの時間無言なら新しい接続が引き継ぐ
 constexpr uint32_t CONTROL_PERIOD_MS = 20;  // 制御周期 (50Hz)
+
+// ---- Jetson（USB シリアル）----
+constexpr uint32_t SERIAL_BAUD = 115200;
+constexpr float AUTO_MAX_DUTY = 0.5f;            // 自律走行の duty 上限（Web の出力上限スライダーは掛けない）
+constexpr uint32_t JETSON_WATCHDOG_MS = 300;     // Jetson の指令がこの時間途絶えたら停止
+constexpr float MANUAL_TAKEOVER_INPUT = 0.05f;   // 自律中に Web からこれを超える入力が来たら手動に戻す
+constexpr uint32_t STATUS_PERIOD_MS = 50;        // ステータス行 $T の送信周期 (20Hz)
+constexpr size_t SERIAL_LINE_MAX = 64;           // 受信する 1 行の最大長（超えた行は捨てて不正として数える）
 
 // ---- 動作テスト（BOOT ボタン / シリアルで 't'）----
 constexpr float SELFTEST_SPEED = 0.3f;

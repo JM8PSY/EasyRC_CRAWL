@@ -1,0 +1,17 @@
+# cugo_base_node の既定値（仮の値。scripts/calibrate.py = cugo_calibrate で実測して更新する）
+cugo_base_node:
+  ros__parameters:
+    port: /dev/cugo_esp32
+    baud: 115200
+    track_width: 0.40       # 左右クローラー中心間距離 [m]（スピンテストで実効値を求める）
+    max_wheel_speed: 1.0    # duty 1.0 時の速度 [m/s]
+    deadband: 0.08          # これ以下の duty では動かない
+    min_speed: 0.01         # これ未満の車輪速度指令は 0 [m/s]
+    max_duty: 0.5           # Jetson 側の duty 上限（ESP32 の AUTO_MAX_DUTY と別に効く）
+    cmd_timeout: 0.5        # /cmd_vel 途絶でゼロにするまで [s]
+    rate: 30.0              # $D 送信周期 [Hz]（ESP32 ウォッチドッグ 300ms のハートビート）
+    odom_frame: odom
+    base_frame: base_footprint
+    use_stamped: false      # true なら /cmd_vel を TwistStamped で購読
+    status_timeout: 0.5     # $T がこの時間途絶えたら mode=disconnected [s]
+    reconnect_interval: 1.0 # シリアル再接続の間隔 [s]

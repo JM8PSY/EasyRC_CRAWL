@@ -1,4 +1,4 @@
-// CuGo V3 Wi-Fi 遠隔操縦（ESP32 + Cytron MD20A ×2）
+// CuGo V3 Wi-Fi 遠隔操縦 + Jetson 自律走行（ESP32 + Cytron MD20A ×2）
 #include <Arduino.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
@@ -24,12 +24,17 @@ WebSocketsServer ws(81);
 Preferences prefs;  // 出力上限の保存先（NVS）
 
 Motion motion(MAX_SPEED, MAX_ACCEL);
-Watchdog watchdog(WATCHDOG_MS);
 DriverArbiter arbiter(TAKEOVER_MS);
+ModeArbiter modes(WATCHDOG_MS, JETSON_WATCHDOG_MS, AUTO_MAX_DUTY, MANUAL_TAKEOVER_INPUT);
 SelfTest selfTest(SELFTEST_SPEED, SELFTEST_DELAY_MS, SELFTEST_RUN_MS, SELFTEST_PAUSE_MS);
+LineBuffer<SERIAL_LINE_MAX> serialLine;
 
 uint32_t lastTick = 0;
+uint32_t lastStatus = 0;
+uint32_t badLines = 0;  // 起動以降の不正行の数（$T で報告）
 int lastReportedStep = -2;
+Mode lastSentMode = Mode::Idle;
+bool lastSentAuto = true;
 
 void writeSide(uint8_t ch, int dirPin, bool invert, float v) {
   SideOutput o = toSideOutput(v, invert);
@@ -94,7 +99,46 @@ void reportSelfTest(uint32_t now) {
   }
 }
 
+const char* modeName(Mode m) {
+  switch (m) {
+    case Mode::Auto:
+      return "自律";
+    case Mode::Manual:
+      return "手動";
+    case Mode::Test:
+      return "テスト";
+    default:
+      return "待機";
+  }
+}
+
 // ---- WebSocket ----
+// {"mode":"I|A|M|X","auto":true|false}
+void formatMode(char* msg, size_t size) {
+  snprintf(msg, size, "{\"mode\":\"%c\",\"auto\":%s}", static_cast<char>(modes.mode()),
+           modes.autoAllowed() ? "true" : "false");
+}
+
+void sendMode(uint8_t id) {
+  char msg[40];
+  formatMode(msg, sizeof(msg));
+  ws.sendTXT(id, msg);
+}
+
+// モードか自律許可が変わったら全クライアントへ送る
+void broadcastModeIfChanged() {
+  if (modes.mode() == lastSentMode && modes.autoAllowed() == lastSentAuto) return;
+  if (modes.mode() != lastSentMode) Serial.printf("[モード] %s\n", modeName(modes.mode()));
+  if (modes.autoAllowed() != lastSentAuto) {
+    Serial.printf("[モード] 自律走行の許可: %s\n", modes.autoAllowed() ? "あり" : "なし");
+  }
+  lastSentMode = modes.mode();
+  lastSentAuto = modes.autoAllowed();
+  char msg[40];
+  formatMode(msg, sizeof(msg));
+  ws.broadcastTXT(msg);
+}
+
 void sendHello(uint8_t id, Role role) {
   char msg[64];
   snprintf(msg, sizeof(msg), "{\"role\":\"%s\",\"max\":%.2f}", role == Role::Driver ? "driver" : "viewer",
@@ -130,19 +174,28 @@ void handleMessage(uint8_t id, const uint8_t* payload, size_t length) {
     case CommandType::Stop:
       abortSelfTest("停止ボタンでテストを中止しました");
       stopNow(nullptr);
+      modes.webStop(now);  // 自律走行の許可も取り消す
       break;
     case CommandType::Drive:
-      // テスト中はブラウザからの走行指令を無視する（停止は受け付ける）
-      if (!selfTest.active()) motion.setTarget(cmd.l, cmd.r);
+      // 出力は制御周期で ModeArbiter が決める（テスト中・自律中は使われない）
+      modes.webDrive(now, cmd.l, cmd.r);
       break;
     case CommandType::SetMax:
       setMaxSpeed(cmd.value);
+      modes.webTouch(now);
+      break;
+    case CommandType::SetAuto:
+      modes.setAutoAllowed(cmd.on);
+      modes.webTouch(now);
       break;
     case CommandType::Invalid:
+      // ログが $ 行や改行で Jetson 側の解析を乱さないよう、制御文字は置き換える
+      for (char* p = buf; *p; p++) {
+        if (static_cast<unsigned char>(*p) < 0x20) *p = '?';
+      }
       Serial.printf("[警告] 不正な指令を無視しました: %.60s\n", buf);
       return;
   }
-  watchdog.feed(now);
   arbiter.touch(id, now);
 }
 
@@ -155,15 +208,21 @@ void onWsEvent(uint8_t id, WStype_t type, uint8_t* payload, size_t length) {
         stopNow("応答のない操縦者から操縦権を引き継ぎました");
         ws.disconnect(kicked);
       }
-      if (role == Role::Driver) Serial.printf("[接続] 操縦者 #%u\n", id);
-      else Serial.printf("[接続] 閲覧のみ #%u\n", id);
+      if (role == Role::Driver) {
+        modes.driverConnected();  // 操縦者が来たら手動（自律走行は許可されるまで止める）
+        Serial.printf("[接続] 操縦者 #%u\n", id);
+      } else {
+        Serial.printf("[接続] 閲覧のみ #%u\n", id);
+      }
       sendHello(id, role);
+      sendMode(id);
       break;
     }
     case WStype_DISCONNECTED:
       if (arbiter.onDisconnect(id)) {
         abortSelfTest(nullptr);
         stopNow("操縦者が切断しました");
+        modes.driverDisconnected();  // 自律走行の許可に戻る
       }
       break;
     case WStype_TEXT:
@@ -218,6 +277,33 @@ void setupWifi() {
   }
 }
 
+// ---- Jetson（USB シリアル）----
+void handleSerialLine(const char* line, uint32_t now) {
+  SerialCommand c = parseSerialLine(line);
+  switch (c.type) {
+    case SerialCommandType::Drive:
+      modes.jetsonDrive(now, c.l, c.r);
+      break;
+    case SerialCommandType::Stop:
+      modes.jetsonStop(now);
+      // 自律で走っているときだけ即時停止する（手動・テスト中は Jetson に権限がない）
+      if (modes.mode() == Mode::Auto && (motion.left() != 0.0f || motion.right() != 0.0f)) {
+        stopNow("Jetson からの停止指令");
+      }
+      break;
+    case SerialCommandType::Invalid:
+      badLines++;
+      break;
+  }
+}
+
+void sendStatus(uint32_t now) {
+  char line[80];
+  size_t n = formatStatus(line, sizeof(line), modes.mode(), motion.left(), motion.right(), AUTO_MAX_DUTY,
+                          modes.flags(now), badLines);
+  if (n > 0) Serial.write(reinterpret_cast<const uint8_t*>(line), n);
+}
+
 // ---- 入力（BOOT ボタン / シリアル）----
 void pollButton(uint32_t now) {
   static bool lastPressed = false;
@@ -232,24 +318,45 @@ void pollButton(uint32_t now) {
 }
 
 void printStatus() {
+  uint32_t now = millis();
   Serial.printf("[状態] L %+.2f / R %+.2f  目標 L %+.2f / R %+.2f  上限 %.0f%%  操縦者 %s  テスト %s\n",
                 motion.left(), motion.right(), motion.targetLeft(), motion.targetRight(), motion.maxSpeed() * 100,
                 arbiter.hasDriver() ? "あり" : "なし", selfTest.active() ? "実行中" : "なし");
+  Serial.printf("[状態] モード %s  自律許可 %s  Jetson %s  自律上限 %.0f%%  不正行 %lu\n", modeName(modes.mode()),
+                modes.autoAllowed() ? "あり" : "なし", modes.jetsonAlive(now) ? "受信中" : "なし",
+                AUTO_MAX_DUTY * 100, static_cast<unsigned long>(badLines));
 }
 
+void handleDebugChar(char c) {
+  switch (c) {
+    case 't':
+      if (!selfTest.active()) startSelfTest();
+      break;
+    case 's':
+      abortSelfTest("シリアルからテストを中止しました");
+      break;
+    case '?':
+      printStatus();
+      break;
+    default:
+      break;
+  }
+}
+
+// '$' で始まる行は Jetson の指令、それ以外の 1 文字はデバッグコマンド（改行なしで打てる）
 void pollSerial() {
   while (Serial.available()) {
-    switch (Serial.read()) {
-      case 't':
-        if (!selfTest.active()) startSelfTest();
+    switch (serialLine.feed(static_cast<char>(Serial.read()))) {
+      case LineEvent::Line:
+        handleSerialLine(serialLine.line(), millis());
         break;
-      case 's':
-        abortSelfTest("シリアルからテストを中止しました");
+      case LineEvent::Overflow:
+        badLines++;
         break;
-      case '?':
-        printStatus();
+      case LineEvent::DebugChar:
+        handleDebugChar(serialLine.debugChar());
         break;
-      default:
+      case LineEvent::None:
         break;
     }
   }
@@ -258,7 +365,7 @@ void pollSerial() {
 void updateLed(uint32_t now) {
   bool on;
   if (selfTest.active()) on = (now / (selfTest.step() == -1 ? 125 : 500)) % 2;  // テスト中は点滅
-  else on = arbiter.hasDriver();                                                // 操縦者接続中は点灯
+  else on = arbiter.hasDriver() || modes.mode() == Mode::Auto;                  // 操縦者接続中・自律中は点灯
   digitalWrite(LED_PIN, on ? HIGH : LOW);
 }
 
@@ -266,14 +373,16 @@ void controlStep(uint32_t now) {
   float dt = (now - lastTick) / 1000.0f;
   lastTick = now;
 
-  if (selfTest.active()) {
+  Decision d = modes.update(now, selfTest.active());
+  if (d.mode == Mode::Test) {
     float l, r;
     selfTest.update(now, &l, &r);
     reportSelfTest(now);
     if (selfTest.active()) motion.setTarget(l, r);
     else stopNow(nullptr);
-  } else if (watchdog.expired(now)) {
-    stopNow("指令が途絶えました");
+  } else {
+    if (d.stopNow) stopNow(d.mode == Mode::Manual ? "指令が途絶えました" : "Jetson の指令が途絶えました");
+    motion.setTarget(d.l, d.r, d.scaled);  // 自律はスライダーを掛けない（±AUTO_MAX_DUTY は調停でクランプ済み）
   }
   motion.tick(dt);
   writeOutputs();
@@ -285,7 +394,8 @@ void setup() {
   setupMotors();
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
-  Serial.begin(115200);
+  Serial.setRxBufferSize(1024);
+  Serial.begin(SERIAL_BAUD);
   delay(200);
   Serial.println();
   Serial.println("=== CuGo RC (ESP32) ===");
@@ -304,7 +414,11 @@ void setup() {
   ws.enableHeartbeat(2000, 2000, 2);  // 応答のない接続を切る（停止は watchdog が先に行う）
 
   Serial.println("BOOT ボタン or シリアル 't' で動作テスト、'?' で状態表示");
-  lastTick = millis();
+  Serial.printf("Jetson: USB シリアルで $D / $S を受信、$T を %luHz で送信（自律上限 %.0f%%）\n",
+                static_cast<unsigned long>(1000 / STATUS_PERIOD_MS), AUTO_MAX_DUTY * 100);
+  // 起動中（Wi-Fi 接続待ち）に溜まった古い指令は使わない
+  while (Serial.available()) Serial.read();
+  lastTick = lastStatus = millis();
 }
 
 void loop() {
@@ -315,5 +429,10 @@ void loop() {
   uint32_t now = millis();
   pollButton(now);
   if (now - lastTick >= CONTROL_PERIOD_MS) controlStep(now);
+  broadcastModeIfChanged();
+  if (now - lastStatus >= STATUS_PERIOD_MS) {
+    lastStatus = now;
+    sendStatus(now);
+  }
   updateLed(now);
 }

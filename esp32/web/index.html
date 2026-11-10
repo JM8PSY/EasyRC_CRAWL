@@ -11,6 +11,7 @@
     <span class="title">CuGo RC</span>
     <span id="conn" class="badge off">切断</span>
     <span id="role" class="badge"></span>
+    <span id="mode" class="badge"></span>
   </header>
 
   <main>
@@ -30,6 +31,11 @@
     <label for="max">出力上限</label>
     <input id="max" type="range" min="5" max="100" step="5" value="100">
     <span id="max-val" class="limit-val">100%</span>
+  </section>
+
+  <section class="auto">
+    <label><input id="auto" type="checkbox" disabled> 自律走行を許可</label>
+    <span class="auto-note">Jetson の指令で走ります（操縦すると手動に戻ります）</span>
   </section>
 
   <section class="controls">
