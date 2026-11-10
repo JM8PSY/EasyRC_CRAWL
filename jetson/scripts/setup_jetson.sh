@@ -23,7 +23,7 @@ LIDAR_USB_PATH="${LIDAR_USB_PATH:-platform-3610000.usb-usb-0:2.4:1.0}"
 YDLIDAR_SDK_URL=https://github.com/YDLIDAR/YDLidar-SDK.git
 YDLIDAR_SDK_REV=e008f32
 YDLIDAR_DRIVER_URL=https://github.com/YDLIDAR/ydlidar_ros2_driver.git
-YDLIDAR_DRIVER_REV=6b9f249
+YDLIDAR_DRIVER_REV=4ef70d3  # humble ブランチ（master は Jazzy でコンパイルできない）
 RF2O_URL=https://github.com/MAPIRlab/rf2o_laser_odometry.git
 RF2O_REV=b38c68e
 

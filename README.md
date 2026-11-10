@@ -9,6 +9,8 @@ Raspberry Pi 4 から Cytron MD20A ×2 を PWM + DIR で駆動し、同一LAN内
 
 **ESP32 版（カメラなし・Wi-Fi 操縦）は [esp32/README.md](esp32/README.md) を参照してください。**
 
+**Jetson による SLAM・自律移動（ROS 2 Jazzy + Nav2、ESP32 は足回り担当）は [jetson/README.md](jetson/README.md) を参照してください。**
+
 ## 配線
 
 | 信号 | Pi 4 GPIO (BCM) | ピン番号 |

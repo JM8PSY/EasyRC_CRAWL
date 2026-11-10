@@ -1,0 +1,112 @@
+<?xml version="1.0"?>
+<!--
+  CuGo V3（クローラー）+ YDLIDAR X4 PRO + RealSense D455
+
+  フレーム:
+    base_footprint（地面上、車体中心の真下。ROS の慣例どおり x 前方 / y 左 / z 上）
+      └ base_link（車体の中心。箱の中心）
+          ├ laser_frame（X4 PRO の回転中心・スキャン面の高さ）
+          └ camera_link（D455。realsense2_camera が camera_link 以下の光学系・IMU フレームを出す）
+
+  !!! 寸法と取付位置はすべて仮の値（要実測） !!!
+  実測後は下の既定値を書き換えるか、launch の xacro_args で上書きする。
+  位置は base_footprint（地面・車体中心）基準 [m]、角度は [rad]。
+-->
+<robot name="cugo_v3" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ===== 車体寸法（要実測） ===== -->
+  <xacro:arg name="body_length" default="0.50"/>   <!-- 要実測: 前後長（クローラー含む） -->
+  <xacro:arg name="body_width"  default="0.45"/>   <!-- 要実測: 左右幅（クローラー含む） -->
+  <xacro:arg name="body_height" default="0.20"/>   <!-- 要実測: 地面から天板までの高さ - 最低地上高 -->
+  <xacro:arg name="body_clearance" default="0.03"/> <!-- 要実測: 箱の下面の地面からの高さ（クローラーは接地するので小さめ） -->
+
+  <!-- ===== LiDAR（X4 PRO）取付位置（要実測） ===== -->
+  <!-- 既定: 天板の中央。z はスキャン面（回転部の中央）の地面からの高さ -->
+  <xacro:arg name="lidar_x"   default="0.0"/>    <!-- 要実測 -->
+  <xacro:arg name="lidar_y"   default="0.0"/>    <!-- 要実測 -->
+  <xacro:arg name="lidar_z"   default="0.28"/>   <!-- 要実測 -->
+  <xacro:arg name="lidar_yaw" default="0.0"/>    <!-- 要実測: LiDAR の 0° 方向が車体前方からずれている場合 -->
+
+  <!-- ===== カメラ（D455）取付位置（要実測） ===== -->
+  <!-- 既定: 車体前端の上。camera_link は D455 の左 IR カメラ（depth 原点）付近、x 前方 -->
+  <xacro:arg name="camera_x"     default="0.24"/>  <!-- 要実測 -->
+  <xacro:arg name="camera_y"     default="0.0"/>   <!-- 要実測 -->
+  <xacro:arg name="camera_z"     default="0.25"/>  <!-- 要実測 -->
+  <xacro:arg name="camera_roll"  default="0.0"/>   <!-- 要実測 -->
+  <xacro:arg name="camera_pitch" default="0.0"/>   <!-- 要実測: 下向きなら正 -->
+  <xacro:arg name="camera_yaw"   default="0.0"/>   <!-- 要実測 -->
+
+  <xacro:property name="L"  value="$(arg body_length)"/>
+  <xacro:property name="W"  value="$(arg body_width)"/>
+  <xacro:property name="H"  value="$(arg body_height)"/>
+  <xacro:property name="ZC" value="$(arg body_clearance)"/>
+  <xacro:property name="base_z" value="${ZC + H / 2.0}"/>
+
+  <material name="cugo_body"><color rgba="0.15 0.15 0.15 1.0"/></material>
+  <material name="cugo_track"><color rgba="0.05 0.05 0.05 1.0"/></material>
+  <material name="lidar_gray"><color rgba="0.3 0.3 0.35 1.0"/></material>
+  <material name="camera_gray"><color rgba="0.55 0.55 0.6 1.0"/></material>
+
+  <link name="base_footprint"/>
+
+  <link name="base_link">
+    <visual>
+      <geometry><box size="${L} ${W * 0.6} ${H}"/></geometry>
+      <material name="cugo_body"/>
+    </visual>
+    <!-- 左右のクローラー（見た目のみ） -->
+    <visual>
+      <origin xyz="0 ${W * 0.4} ${-ZC / 2.0}"/>
+      <geometry><box size="${L} ${W * 0.2} ${H + ZC}"/></geometry>
+      <material name="cugo_track"/>
+    </visual>
+    <visual>
+      <origin xyz="0 ${-W * 0.4} ${-ZC / 2.0}"/>
+      <geometry><box size="${L} ${W * 0.2} ${H + ZC}"/></geometry>
+      <material name="cugo_track"/>
+    </visual>
+    <collision>
+      <geometry><box size="${L} ${W} ${H}"/></geometry>
+    </collision>
+  </link>
+
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${base_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- YDLIDAR X4 PRO（直径約 70mm） -->
+  <link name="laser_frame">
+    <visual>
+      <origin xyz="0 0 -0.015"/>
+      <geometry><cylinder radius="0.035" length="0.04"/></geometry>
+      <material name="lidar_gray"/>
+    </visual>
+  </link>
+
+  <joint name="base_link_to_laser_frame" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_frame"/>
+    <origin xyz="$(arg lidar_x) $(arg lidar_y) ${$(arg lidar_z) - base_z}" rpy="0 0 $(arg lidar_yaw)"/>
+  </joint>
+
+  <!-- RealSense D455（124 x 26 x 29 mm）。
+       camera_link の子（camera_depth_frame, camera_color_optical_frame, camera_imu_optical_frame など）は
+       realsense2_camera（publish_tf: true）が配信するので、ここでは定義しない（親の重複を避ける）。 -->
+  <link name="camera_link">
+    <visual>
+      <origin xyz="-0.0145 -0.0475 0"/>  <!-- D455 の depth 原点は筐体中心から約 47.5mm 左 -->
+      <geometry><box size="0.029 0.124 0.026"/></geometry>
+      <material name="camera_gray"/>
+    </visual>
+  </link>
+
+  <joint name="base_link_to_camera_link" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="$(arg camera_x) $(arg camera_y) ${$(arg camera_z) - base_z}"
+            rpy="$(arg camera_roll) $(arg camera_pitch) $(arg camera_yaw)"/>
+  </joint>
+
+</robot>

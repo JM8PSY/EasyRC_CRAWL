@@ -1,0 +1,25 @@
+# twist_mux（ROS 2 Jazzy / twist_mux 4.x）
+# 出力: /cmd_vel（launch で cmd_vel_out → /cmd_vel にリマップ）→ cugo_base
+# 型: twist_mux 4.x は use_stamped の既定が true（TwistStamped）。Jazzy の Nav2・teleop_twist_keyboard・
+#     cugo_base（use_stamped: false）に合わせて geometry_msgs/Twist にする。
+twist_mux:
+  ros__parameters:
+    use_stamped: false
+    topics:
+      # 手動（キーボードなど）が優先。途絶えて 0.5s 経つと Nav2 に戻る
+      teleop:
+        topic   : /cmd_vel_teleop
+        timeout : 0.5
+        priority: 100
+      # Nav2 の最終出力（velocity_smoother → collision_monitor の後。config/nav2_params.yaml 参照）
+      navigation:
+        topic   : /cmd_vel_nav_safe
+        timeout : 0.5
+        priority: 10
+    locks:
+      # std_msgs/Bool の true を送り続けると Nav2 の指令を止める（teleop は通る）
+      #   ros2 topic pub -r 5 /pause_navigation std_msgs/msg/Bool "data: true"
+      pause_navigation:
+        topic   : /pause_navigation
+        timeout : 0.0
+        priority: 50

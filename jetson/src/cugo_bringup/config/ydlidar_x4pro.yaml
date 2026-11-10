@@ -1,0 +1,28 @@
+# YDLIDAR X4 PRO
+# ydlidar_ros2_driver の params/X4-Pro.yaml（master @6b9f249）をベースにしたもの。実際に使うドライバは humble @4ef70d3。
+# reversion / inverted は humble 版の既定（false/false）と異なる。実機でスキャンの向きを確認すること（README 参照）。
+# port は udev で固定した /dev/cugo_lidar（USB ポート位置で固定）。
+# 注意: この Jetson では別プロジェクトの udev ルールにより /dev/ydlidar が ESP32 を指すので使わないこと。
+ydlidar_ros2_driver_node:
+  ros__parameters:
+    port: /dev/cugo_lidar
+    frame_id: laser_frame
+    ignore_array: ""
+    baudrate: 128000
+    lidar_type: 1            # TYPE_TRIANGLE
+    device_type: 0           # YDLIDAR_TYPE_SERIAL
+    sample_rate: 5           # kHz
+    abnormal_check_count: 4
+    fixed_resolution: true
+    reversion: true
+    inverted: true
+    auto_reconnect: true
+    isSingleChannel: true
+    intensity: false
+    support_motor_dtr: false
+    angle_max: 180.0
+    angle_min: -180.0
+    range_max: 10.0          # X4 PRO 公称 0.12〜10m
+    range_min: 0.12
+    frequency: 10.0          # Hz
+    invalid_range_is_inf: false
