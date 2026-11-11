@@ -25,7 +25,7 @@
   <xacro:arg name="lidar_x"   default="0.0"/>    <!-- 要実測 -->
   <xacro:arg name="lidar_y"   default="0.0"/>    <!-- 要実測 -->
   <xacro:arg name="lidar_z"   default="0.28"/>   <!-- 要実測 -->
-  <xacro:arg name="lidar_yaw" default="0.0"/>    <!-- 要実測: LiDAR の 0° 方向が車体前方からずれている場合 -->
+  <xacro:arg name="lidar_yaw" default="-1.5708"/> <!-- 実機 RViz で確認: スキャンが +90°（左）にずれていたため -90° 補正 -->
 
   <!-- ===== カメラ（D455）取付位置（要実測） ===== -->
   <!-- 既定: 車体前端の上。camera_link は D455 の左 IR カメラ（depth 原点）付近、x 前方 -->
