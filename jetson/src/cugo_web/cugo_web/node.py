@@ -169,6 +169,7 @@ class CugoWebNode(Node):
     def set_drive(self, v, w):
         v, w = clamp_drive(v, w, self.max_v, self.max_w)
         if (v or w) and self.explorer is not None and self.explorer.state == 'running':
+            self.get_logger().info('manual drive v=%.3f w=%.3f stops exploration' % (v, w))
             self.explorer.stop('手動で操縦したので自動探索をやめました')
         with self._lock:
             self._drive = (v, w)
@@ -336,6 +337,11 @@ class CugoWebNode(Node):
                 if self._goal_handle is handle:  # 新しいゴールに置き換わっていなければ
                     self.nav_state = status
                     self._goal_handle = None
+                    # 終わった目的地と経路を地図に残さない（止まっているのに移動中に見えるため）
+                    self.goal = None
+                    self.plan_pts = []
+                    self.plan_version += 1
+                self.get_logger().info('goal (%.2f, %.2f) -> %s' % (x, y, status))
                 if on_result:
                     on_result(status)
             handle.get_result_async().add_done_callback(done)
@@ -377,6 +383,7 @@ class CugoWebNode(Node):
     def cancel_goal(self):
         handle = self._goal_handle
         if handle is not None:
+            self.get_logger().info('cancel goal')
             handle.cancel_goal_async()
 
     # ---------------- 進入禁止エリア ----------------

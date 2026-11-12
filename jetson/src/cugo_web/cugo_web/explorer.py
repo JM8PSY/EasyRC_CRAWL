@@ -50,6 +50,7 @@ class Explorer:
         self.blacklist = []
         self.state = 'running'
         self.notify('info', '自動探索を開始しました')
+        self.node.get_logger().info('explore: start')
         self._thread = threading.Thread(target=self._run, name='explorer', daemon=True)
         self._thread.start()
 
@@ -62,6 +63,7 @@ class Explorer:
             return
         self._stop.set()
         self.state = 'off'
+        self.node.get_logger().info('explore: stop (%s)' % (reason or 'no reason'))
         self.node.cancel_goal()
         if reason:
             self.notify('warn', reason)
@@ -96,8 +98,11 @@ class Explorer:
                 self.frontiers = frontier.count_frontiers(grid, res, origin, robot, self.blacklist)
                 if goal is None:
                     empty += 1
+                    self.node.get_logger().info('explore: no frontier goal (%d/%d, frontiers=%s)'
+                                                % (empty, NO_FRONTIER_CONFIRM, self.frontiers))
                     if empty >= NO_FRONTIER_CONFIRM:
                         self.state = 'done'
+                        self.node.get_logger().info('explore: done')
                         self.frontiers = 0
                         self.notify('info', '自動探索が完了しました（未探索の境界がありません）。'
                                             '「地図保存」で保存できます')
@@ -105,7 +110,11 @@ class Explorer:
                     self._stop.wait(2.0)  # 地図の更新を待ってもう一度
                     continue
                 empty = 0
+                self.node.get_logger().info('explore: goal (%.2f, %.2f) size=%.1f dist=%.2f'
+                                            % (goal.x, goal.y, goal.size, goal.distance))
+                t0 = time.monotonic()
                 result = self._go(goal, res)
+                self.node.get_logger().info('explore: %s after %.1fs' % (result, time.monotonic() - t0))
                 if self._stop.is_set():
                     return
                 if result in ('aborted', 'rejected', 'timeout', 'skipped'):
