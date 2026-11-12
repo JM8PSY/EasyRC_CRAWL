@@ -11,6 +11,12 @@ const MIN_SCALE = 2; // px/m
 const MAX_SCALE = 600;
 const STORE_V = "cugo_web.maxV";
 const STORE_W = "cugo_web.maxW";
+const STORE_PAD_HINT = "cugo_web.padHintClosed";
+const HTTPS_PORT = 8443;
+const PAD_DEADZONE = 0.12; // スティックの不感帯（半径）
+const PAD_SLOW = 0.5; // R1 を押している間の速度倍率
+// 標準マッピング（DualShock 4 / 5）のボタン番号
+const PAD_BTN = { cross: 0, circle: 1, square: 2, triangle: 3, l1: 4, r1: 5, options: 9 };
 
 // ESP32 のモード → [表示, バッジの色]
 const MODES = {
@@ -37,6 +43,11 @@ let sending = !document.hidden;
 let zeroLeft = 0;
 const keys = new Set();
 const joy = { active: false, pointerId: null, fwd: 0, turn: 0 };
+// ゲームパッド: active = L1 を押してスティックを倒している（fwd/turn は低速倍率込み）
+// blocked = 停止後、L1 を一度離すまで操縦しない
+const gp = { connected: false, active: false, fwd: 0, turn: 0, prev: [], blocked: false };
+// 自動探索: state = "off" | "running" | "done" | "failed"、frontiers = 残りの未探索境界数（不明なら null）
+const explore = { state: "off", frontiers: null };
 
 const world = {
   map: null, // {img, w, h, res, ox, oy}
@@ -53,6 +64,7 @@ let goalDrag = null; // {sx, sy, x, y, curSx, curSy}
 // LiDAR 取り付け向きの補正
 const calib = {
   saved: null, // サーバーに保存されている lidar_yaw [rad]（未受信なら null）
+  cam: null, // {pitch, roll, z} カメラの床補正値 [rad, rad, m]（未受信なら null）
   open: false, // 補正パネル表示中
   candDeg: 0, // 候補値 [deg]（整数、-180〜180）
 };
@@ -102,6 +114,7 @@ function send(obj) {
 // 入力中なら {fwd, turn}（-1〜1, turn は右が +）、入力なしなら null
 function currentInput() {
   if (joy.active) return { fwd: joy.fwd, turn: joy.turn };
+  if (gp.active) return { fwd: gp.fwd, turn: gp.turn };
   if (keys.size === 0) return null;
   const fwd = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
   const turn = (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0);
@@ -121,7 +134,10 @@ function driveTick() {
     if (sending) send({ t: "drive", v: 0, w: 0 });
   }
 }
-setInterval(driveTick, SEND_INTERVAL_MS);
+setInterval(() => {
+  pollGamepad(); // rAF が止まっている場合の保険
+  driveTick();
+}, SEND_INTERVAL_MS);
 
 function round3(x) {
   return Math.round(x * 1000) / 1000;
@@ -133,10 +149,13 @@ function resetInput() {
   joy.pointerId = null;
   joy.fwd = joy.turn = 0;
   $("knob").style.transform = "";
+  gp.active = false;
+  gp.fwd = gp.turn = 0;
 }
 
 function emergencyStop() {
   resetInput();
+  gp.blocked = true; // L1 を離すまでゲームパッドで動かさない
   zeroLeft = 0;
   send({ t: "stop" });
 }
@@ -190,7 +209,8 @@ function toast(text, level) {
 
 // ==== WebSocket ====
 function connect() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${scheme}://${location.host}/ws`);
   setConn("接続中…", "warn");
   ws.onopen = () => {
     setConn("接続", "ok");
@@ -210,6 +230,7 @@ function connect() {
     setBadge("mode", MODES, null);
     setBadge("nav", NAVS, null);
     setHint(null);
+    setExplore("off", null);
     resetInput();
     zeroLeft = 0;
     world.scan = [];
@@ -227,6 +248,10 @@ function handleMessage(msg) {
       setBadge("mode", MODES, msg.mode);
       setBadge("nav", NAVS, msg.nav);
       setHint(msg.mode);
+      setExplore(
+        typeof msg.explore === "string" ? msg.explore : "off",
+        Number.isFinite(msg.frontiers) ? Math.round(msg.frontiers) : null,
+      );
       world.pose = validPose(msg.pose);
       world.goal = validPose(msg.goal);
       requestDraw();
@@ -248,6 +273,11 @@ function handleMessage(msg) {
         calib.saved = msg.lidar_yaw;
         updateCalibUI();
         requestDraw();
+      }
+      if (Number.isFinite(msg.camera_pitch) || Number.isFinite(msg.camera_roll) || Number.isFinite(msg.camera_z)) {
+        const num = (v) => (Number.isFinite(v) ? v : null);
+        calib.cam = { pitch: num(msg.camera_pitch), roll: num(msg.camera_roll), z: num(msg.camera_z) };
+        updateCalibUI();
       }
       break;
   }
@@ -712,6 +742,7 @@ $("btn-reset").addEventListener("click", () => {
   if (!window.confirm("地図を消して作り直しますか？")) return;
   send({ t: "reset_map" });
 });
+$("btn-explore").addEventListener("click", toggleExplore);
 $("btn-calib").addEventListener("click", () => {
   if (calib.open) closeCalib();
   else openCalib();
@@ -742,6 +773,15 @@ function updateCalibUI() {
   $("calib-saved").textContent = calib.saved === null ? "—" : fmtDeg(savedDeg());
   $("calib-cand").textContent = fmtDeg(calib.candDeg);
   $("calib-apply").disabled = !wsOpen();
+  $("calib-floor").disabled = !wsOpen();
+  const cam = $("calib-cam");
+  const c = calib.cam;
+  if (c) {
+    const deg = (r) => (r === null ? "—" : `${(r / RAD).toFixed(1)}°`);
+    const z = c.z === null ? "—" : `${c.z.toFixed(2)} m`;
+    cam.textContent = `カメラ: 下向き ${deg(c.pitch)} / 横 ${deg(c.roll)} / 高さ ${z}`;
+  }
+  cam.hidden = !c;
 }
 
 function setCandidate(d) {
@@ -787,6 +827,14 @@ $("calib-apply").addEventListener("click", () => {
     send({ t: "reset_map" });
   }
   closeCalib();
+});
+$("calib-floor").addEventListener("click", () => {
+  if (!wsOpen()) {
+    toast("未接続のため補正できません", "warn");
+    return;
+  }
+  send({ t: "calib_floor" });
+  toast("カメラの床補正を開始しました");
 });
 
 // ボタンにフォーカスが残ると Space で押されてしまうので外す
@@ -894,6 +942,171 @@ window.addEventListener("pagehide", () => {
   pad.addEventListener("lostpointercapture", release);
 })();
 
+// ==== 自動探索 ====
+const EXPLORE_CONFIRM = "ロボットが自動で走り回って地図を作ります。周りに人や障害物がないことを確認してください。開始しますか？";
+
+function setExplore(state, frontiers) {
+  explore.state = state;
+  explore.frontiers = frontiers;
+  const running = state === "running";
+  const btn = $("btn-explore");
+  btn.textContent = running ? "探索停止" : "自動探索";
+  btn.classList.toggle("on", running);
+  const badge = $("explore");
+  badge.textContent = running ? (frontiers === null ? "探索中" : `探索中（残り ${frontiers}）`) : "";
+  badge.className = "badge" + (running ? " ok" : "");
+}
+
+function toggleExplore() {
+  if (!wsOpen()) {
+    toast("未接続のため自動探索を操作できません", "warn");
+    return;
+  }
+  if (explore.state === "running") {
+    send({ t: "explore", on: false });
+    return;
+  }
+  setGoalMode(false);
+  resetInput(); // ダイアログ中は keyup が届かないため
+  if (!window.confirm(EXPLORE_CONFIRM)) return;
+  send({ t: "explore", on: true });
+}
+
+// ==== ゲームパッド（DualShock / Gamepad API）====
+// Gamepad API は https（セキュアコンテキスト）でしか使えない
+function padSupported() {
+  return typeof navigator.getGamepads === "function" && window.isSecureContext === true;
+}
+
+// mapping === "standard" の最初のパッド、なければ最初のパッド
+function findPad() {
+  if (!padSupported()) return null;
+  let list;
+  try {
+    list = navigator.getGamepads() || [];
+  } catch (_) {
+    return null;
+  }
+  let first = null;
+  for (const p of list) {
+    if (!p || p.connected === false) continue;
+    if (p.mapping === "standard") return p;
+    if (!first) first = p;
+  }
+  return first;
+}
+
+// 円形の不感帯。外側は 0〜1 に引き伸ばす
+function padDeadzone(x, y) {
+  x = Number.isFinite(x) ? x : 0;
+  y = Number.isFinite(y) ? y : 0;
+  const m = Math.hypot(x, y);
+  if (m < PAD_DEADZONE) return [0, 0];
+  const s = Math.min(1, (m - PAD_DEADZONE) / (1 - PAD_DEADZONE)) / m;
+  return [x * s, y * s];
+}
+
+function padPressed(p, i) {
+  const b = p.buttons[i];
+  return !!b && (b.pressed || b.value > 0.5);
+}
+
+function updatePadUI() {
+  $("pad").textContent = gp.connected ? "コントローラー" : "";
+}
+
+function pollGamepad() {
+  const p = findPad();
+  const wasActive = gp.active;
+  if (!p) {
+    if (gp.connected) {
+      gp.connected = false;
+      gp.prev = [];
+      updatePadUI();
+    }
+    gp.active = false;
+    gp.fwd = gp.turn = 0;
+    if (wasActive) driveTick(); // 切断 = 離したのと同じ扱い（0 を送る）
+    return;
+  }
+  if (!gp.connected) {
+    gp.connected = true;
+    updatePadUI();
+  }
+
+  const pressed = Array.from(p.buttons, (_, i) => padPressed(p, i));
+  const firstPoll = gp.prev.length === 0;
+  const edge = (i) => pressed[i] && !gp.prev[i];
+  gp.prev = pressed;
+
+  // 操縦（L1 = デッドマン）
+  const l1 = pressed[PAD_BTN.l1];
+  if (!l1) gp.blocked = false;
+  let fwd = 0;
+  let turn = 0;
+  if (l1 && !gp.blocked && sending) {
+    const [, ly] = padDeadzone(p.axes[0], p.axes[1]);
+    const [rx] = padDeadzone(p.axes[2], p.axes[3]);
+    const k = pressed[PAD_BTN.r1] ? PAD_SLOW : 1;
+    fwd = -ly * k; // 上 = マイナス
+    turn = rx * k; // 右 = プラス（driveTick で右旋回 = w マイナスにする）
+  }
+  gp.active = fwd !== 0 || turn !== 0;
+  gp.fwd = fwd;
+  gp.turn = turn;
+  if (wasActive && !gp.active && !joy.active) driveTick(); // 即座に 0 を送る
+
+  // ボタン（押した瞬間だけ）。✕ は接続直後の押下でも効かせる
+  if (edge(PAD_BTN.cross)) {
+    emergencyStop();
+    return;
+  }
+  if (firstPoll) return;
+  if (edge(PAD_BTN.triangle)) {
+    setGoalMode(false);
+    send({ t: "cancel" });
+  }
+  if (edge(PAD_BTN.options)) {
+    toggleExplore();
+  }
+}
+
+function padLoop() {
+  pollGamepad();
+  requestAnimationFrame(padLoop);
+}
+
+function setupPadHint() {
+  if (padSupported()) return;
+  try {
+    if (localStorage.getItem(STORE_PAD_HINT)) return;
+  } catch (_) { /* 無視 */ }
+  const text = $("pad-hint-text");
+  if (location.protocol === "https:" && window.isSecureContext) {
+    text.textContent = "このブラウザはコントローラー（Gamepad API）に対応していません";
+  } else {
+    const url = `https://${location.hostname}:${HTTPS_PORT}/`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.textContent = url;
+    text.append("DualShock を使うには ", a, " で開いてください（証明書の警告は「詳細」→「続行」）");
+  }
+  $("pad-hint").hidden = false;
+  $("pad-hint-close").addEventListener("click", () => {
+    $("pad-hint").hidden = true;
+    try { localStorage.setItem(STORE_PAD_HINT, "1"); } catch (_) { /* 無視 */ }
+    requestAnimationFrame(resize);
+  });
+}
+
+if (padSupported()) {
+  window.addEventListener("gamepadconnected", pollGamepad);
+  window.addEventListener("gamepaddisconnected", pollGamepad);
+  requestAnimationFrame(padLoop);
+}
+setupPadHint();
+
 // ==== 起動 ====
+setExplore("off", null);
 resize();
 connect();

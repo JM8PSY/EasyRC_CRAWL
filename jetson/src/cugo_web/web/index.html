@@ -12,8 +12,14 @@
     <span id="conn" class="badge off">切断</span>
     <span id="mode" class="badge"></span>
     <span id="nav" class="badge"></span>
+    <span id="explore" class="badge"></span>
+    <span id="pad" class="badge ok"></span>
   </header>
   <div id="hint" class="hint" hidden></div>
+  <div id="pad-hint" class="hint pad-hint" hidden>
+    <span id="pad-hint-text"></span>
+    <button id="pad-hint-close" type="button" class="hint-close" aria-label="閉じる">×</button>
+  </div>
 
   <div class="layout">
     <main id="view" class="view">
@@ -41,12 +47,20 @@
           <button id="calib-cancel" type="button">キャンセル</button>
           <button id="calib-apply" type="button" class="primary">適用</button>
         </div>
+        <div class="calib-floor">
+          <p class="calib-help">カメラの傾き・高さを床から自動補正します。ロボットの前 0.5〜2m に何も置かず、平らな床が見える状態で押してください。</p>
+          <div id="calib-cam" class="calib-cam" hidden></div>
+          <div class="calib-actions">
+            <button id="calib-floor" type="button">カメラを床で補正</button>
+          </div>
+        </div>
       </section>
     </main>
 
     <aside class="panel">
       <nav class="toolbar">
         <button id="btn-goal" type="button">目的地</button>
+        <button id="btn-explore" type="button">自動探索</button>
         <button id="btn-cancel" type="button">中止</button>
         <button id="btn-save" type="button">地図保存</button>
         <button id="btn-follow" type="button" class="on">ロボット追従</button>
@@ -75,6 +89,11 @@
         </div>
         <button id="stop" class="stop" type="button">停止<br><small>Space</small></button>
       </section>
+
+      <details class="pad-help">
+        <summary>コントローラー（DualShock）操作</summary>
+        <p>L1 を押しながら 左スティック: 前後 / 右スティック: 旋回、R1: 低速、✕: 停止、△: 目的地中止、OPTIONS: 自動探索</p>
+      </details>
     </aside>
   </div>
 

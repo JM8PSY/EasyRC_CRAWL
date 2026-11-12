@@ -19,7 +19,7 @@ from launch_ros.substitutions import FindPackageShare
 
 CALIBRATION_FILE = os.path.expanduser('~/.config/cugo/calibration.yaml')
 # calibration.yaml で上書きできる xacro 引数
-CALIBRATION_KEYS = ('lidar_yaw',)
+CALIBRATION_KEYS = ('lidar_yaw', 'camera_pitch', 'camera_roll', 'camera_z')
 
 
 def calibration_args(path=CALIBRATION_FILE):

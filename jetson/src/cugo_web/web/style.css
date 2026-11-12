@@ -66,6 +66,22 @@ header {
 }
 .hint.err { background: #4a1517; color: #ffa198; }
 .hint[hidden] { display: none; }
+.pad-hint { display: flex; align-items: center; gap: 8px; background: #0c2d4a; color: #a5d6ff; }
+.pad-hint a { color: #fff; font-weight: 700; word-break: break-all; }
+.pad-hint span { flex: 1; min-width: 0; }
+.hint-close {
+  flex-shrink: 0;
+  width: 26px; height: 26px;
+  padding: 0;
+  border: 1px solid #ffffff33;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
 
 /* ---- 全体レイアウト（縦: 地図の下に操作 / 横: 右に操作）---- */
 .layout {
@@ -183,6 +199,16 @@ header {
 .calib button:active { filter: brightness(0.8); }
 .calib button.primary { background: var(--blue); border-color: var(--blue); font-weight: 700; }
 .calib button:disabled { opacity: 0.4; cursor: default; filter: none; }
+.calib-floor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid #ffffff22;
+}
+.calib-floor .calib-help { color: var(--muted); }
+.calib-cam { color: var(--text); font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
+.calib-cam[hidden] { display: none; }
 
 /* ---- 操作パネル ---- */
 .panel {
@@ -200,7 +226,7 @@ header {
   padding: 6px 8px;
 }
 .toolbar button {
-  flex: 1 1 22%;
+  flex: 1 1 18%; /* 9 個 → 5 + 4 */
   min-width: 0;
   min-height: 38px;
   padding: 4px 2px;
@@ -208,7 +234,7 @@ header {
   border-radius: 8px;
   background: var(--panel2);
   color: var(--text);
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.2;
   cursor: pointer;
   font-family: inherit;
@@ -217,6 +243,7 @@ header {
 .toolbar button.on { background: var(--blue); border-color: var(--blue); }
 #btn-cancel { color: #ffa198; }
 #btn-reset { color: #ffa198; }
+#btn-explore.on { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 700; }
 
 .sliders { padding: 0 12px; }
 .slider {
@@ -262,6 +289,14 @@ header {
 
 .help { color: var(--muted); font-size: 12px; text-align: center; line-height: 1.7; display: none; }
 
+.pad-help {
+  padding: 0 12px 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.pad-help summary { cursor: pointer; padding: 2px 0; }
+.pad-help p { margin: 2px 0 0; line-height: 1.5; }
+
 .joy {
   position: relative;
   width: 124px; height: 124px;
@@ -297,7 +332,7 @@ header {
     justify-content: flex-end;
   }
   .toolbar { flex-wrap: wrap; }
-  .toolbar button { flex: 1 1 30%; }
+  .toolbar button { flex: 1 1 30%; font-size: 12px; } /* 9 個 → 3 × 3 */
   .controls { padding: 12px 20px 16px; }
 }
 
@@ -317,4 +352,5 @@ header {
   .controls { padding: 4px 16px 8px; }
   .calib { gap: 4px; padding: 6px 8px; }
   .calib button { min-height: 28px; }
+  .pad-help { padding-bottom: 2px; }
 }
