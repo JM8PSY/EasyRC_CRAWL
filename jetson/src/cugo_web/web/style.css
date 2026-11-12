@@ -56,6 +56,21 @@ header {
 .badge.warn { background: var(--warn); color: #000; }
 .badge.auto { background: var(--blue); }
 .badge.err { background: var(--danger); }
+/* 探索中だけ出す「スキップ」ボタン（バッジと同じ大きさ） */
+.badge-btn {
+  padding: 3px 10px;
+  border: 1px solid #ffffff44;
+  border-radius: 999px;
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: inherit;
+}
+.badge-btn:active { filter: brightness(0.8); }
+.badge-btn[hidden] { display: none; }
 
 .hint {
   padding: 4px 12px;
@@ -106,7 +121,7 @@ header {
   display: block;
   touch-action: none;
 }
-.view.goal-mode canvas { cursor: crosshair; }
+.view.goal-mode canvas, .view.zone-mode canvas { cursor: crosshair; }
 
 .nomap {
   position: absolute;
@@ -133,6 +148,43 @@ header {
   pointer-events: none;
 }
 .goal-hint[hidden] { display: none; }
+
+/* ---- 進入禁止エリアの作図ツールバー（地図の上部に重ねる）---- */
+.keepout-bar {
+  position: absolute;
+  top: 8px; left: 8px; right: 8px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: #1c2128e6;
+  border: 1px solid #ff3c3c88;
+  box-shadow: 0 2px 12px #000a;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.keepout-bar[hidden] { display: none; }
+.keepout-help { margin: 0; font-size: 12px; line-height: 1.4; color: #ffa198; text-align: center; }
+.keepout-actions { display: flex; gap: 4px; }
+.keepout-bar button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 2px;
+  border: 1px solid #ffffff22;
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.keepout-bar button:active { filter: brightness(0.8); }
+.keepout-bar button.primary { background: var(--blue); border-color: var(--blue); font-weight: 700; }
+.keepout-bar button.danger { color: #ffa198; }
+.keepout-bar button:disabled { opacity: 0.4; cursor: default; filter: none; }
 
 .toasts {
   position: absolute;
@@ -226,7 +278,7 @@ header {
   padding: 6px 8px;
 }
 .toolbar button {
-  flex: 1 1 18%; /* 9 個 → 5 + 4 */
+  flex: 1 1 18%; /* 10 個 → 5 + 5 */
   min-width: 0;
   min-height: 38px;
   padding: 4px 2px;
@@ -234,7 +286,7 @@ header {
   border-radius: 8px;
   background: var(--panel2);
   color: var(--text);
-  font-size: 11.5px;
+  font-size: 11px;
   line-height: 1.2;
   cursor: pointer;
   font-family: inherit;
@@ -244,6 +296,8 @@ header {
 #btn-cancel { color: #ffa198; }
 #btn-reset { color: #ffa198; }
 #btn-explore.on { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 700; }
+#btn-keepout { color: #ff8a80; }
+#btn-keepout.on { background: #b62324; border-color: #b62324; color: #fff; font-weight: 700; }
 
 .sliders { padding: 0 12px; }
 .slider {
@@ -332,7 +386,7 @@ header {
     justify-content: flex-end;
   }
   .toolbar { flex-wrap: wrap; }
-  .toolbar button { flex: 1 1 30%; font-size: 12px; } /* 9 個 → 3 × 3 */
+  .toolbar button { flex: 1 1 18%; font-size: 11px; } /* 10 個 → 5 × 2 */
   .controls { padding: 12px 20px 16px; }
 }
 
@@ -352,5 +406,7 @@ header {
   .controls { padding: 4px 16px 8px; }
   .calib { gap: 4px; padding: 6px 8px; }
   .calib button { min-height: 28px; }
+  .keepout-bar { gap: 4px; padding: 4px 6px; }
+  .keepout-bar button { min-height: 28px; }
   .pad-help { padding-bottom: 2px; }
 }

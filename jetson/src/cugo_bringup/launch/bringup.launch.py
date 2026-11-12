@@ -73,7 +73,7 @@ def generate_launch_description():
         _include('cugo_bringup', 'localization.launch.py', is_nav, {'map': map_yaml}),
         _include('cugo_bringup', 'navigation.launch.py', IfCondition(use_nav)),
         _include('cugo_bringup', 'twist_mux.launch.py'),
-        _include('cugo_web', 'cugo_web.launch.py', IfCondition(use_web)),
+        _include('cugo_web', 'cugo_web.launch.py', IfCondition(use_web), {'map_yaml': map_yaml}),
 
         Node(
             condition=IfCondition(use_rviz),

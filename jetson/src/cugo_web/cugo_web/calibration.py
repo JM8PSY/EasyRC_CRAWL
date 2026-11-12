@@ -10,7 +10,8 @@ from typing import Dict, Optional
 
 import yaml
 
-CALIBRATION_FILE = os.path.expanduser('~/.config/cugo/calibration.yaml')
+CONFIG_DIR = os.path.expanduser('~/.config/cugo')
+CALIBRATION_FILE = os.path.join(CONFIG_DIR, 'calibration.yaml')
 
 
 def wrap_angle(a: float) -> float:

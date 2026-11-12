@@ -5,6 +5,9 @@
 
 安全:
 - 停止ボタン・手動操縦・手動の目的地指定で探索をやめる（node 側から stop() を呼ぶ）
+- 進入禁止エリア（node.zones）の中は「占有」として扱い、行き先に選ばない。
+  移動中の行き先が新しく描いた禁止エリアに入ったら、取り消して次を選ぶ
+- skip() で今の行き先をやめて次へ（ブラックリストに入れる）
 - 速度は Nav2 の上限（0.3 m/s）と cugo_base / ESP32 の上限に従う
 """
 import math
@@ -14,7 +17,7 @@ from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-from cugo_web import frontier
+from cugo_web import frontier, keepout
 
 GOAL_TIMEOUT = 90.0       # 1 つの目的地にかける最大時間 [s]
 NO_FRONTIER_CONFIRM = 3   # フロンティア無しがこの回数続いたら完了
@@ -29,6 +32,8 @@ class Explorer:
         self.frontiers: Optional[int] = None
         self.blacklist: List[Tuple[float, float]] = []
         self._stop = threading.Event()
+        self._skip = threading.Event()
+        self.target: Optional[Tuple[float, float]] = None
         self._thread: Optional[threading.Thread] = None
 
     # ---- 操作 ----
@@ -48,6 +53,10 @@ class Explorer:
         self._thread = threading.Thread(target=self._run, name='explorer', daemon=True)
         self._thread.start()
 
+    def skip(self) -> None:
+        if self.state == 'running':
+            self._skip.set()
+
     def stop(self, reason: Optional[str] = None) -> None:
         if self.state != 'running':
             return
@@ -64,7 +73,13 @@ class Explorer:
             return None
         info = msg.info
         grid = np.asarray(msg.data, dtype=np.int16).reshape(info.height, info.width)
-        return grid, info.resolution, (info.origin.position.x, info.origin.position.y)
+        origin = (info.origin.position.x, info.origin.position.y)
+        zones = list(self.node.zones)
+        if zones:
+            # 禁止エリアは「占有」にする → その中と、そこに接する境界は選ばれない
+            grid = grid.copy()
+            grid[keepout.rasterize(zones, info.width, info.height, info.resolution, origin)] = 100
+        return grid, info.resolution, origin
 
     def _run(self) -> None:
         empty = 0
@@ -93,7 +108,7 @@ class Explorer:
                 result = self._go(goal, res)
                 if self._stop.is_set():
                     return
-                if result in ('aborted', 'rejected', 'timeout'):
+                if result in ('aborted', 'rejected', 'timeout', 'skipped'):
                     self.blacklist.append((goal.x, goal.y))
                     self.node.get_logger().info('explore: %s -> blacklist (%.2f, %.2f)'
                                                 % (result, goal.x, goal.y))
@@ -105,6 +120,8 @@ class Explorer:
 
     def _go(self, goal, res) -> str:
         """目的地へ送り、終わるまで待つ。succeeded / explored / aborted / rejected / timeout / stopped"""
+        self._skip.clear()
+        self.target = (goal.x, goal.y)
         handle = self.node.navigate(goal.x, goal.y, goal.yaw)
         if handle is None:
             return 'rejected'
@@ -114,6 +131,10 @@ class Explorer:
             status = self.node.goal_status(handle)
             if status is not None:
                 return status
+            if self._skip.is_set() or self._in_keepout(goal):
+                self.node.cancel_goal()
+                self.notify('info', '行き先をスキップして次を探します')
+                return 'skipped'
             now = time.monotonic()
             if now - start > GOAL_TIMEOUT:
                 self.node.cancel_goal()
@@ -126,6 +147,10 @@ class Explorer:
                     return 'explored'
             self._stop.wait(0.2)
         return 'stopped'
+
+    def _in_keepout(self, goal) -> bool:
+        x, y = np.array([goal.x]), np.array([goal.y])
+        return any(bool(keepout.points_in_polygon(x, y, z['pts'])[0]) for z in self.node.zones)
 
     def _goal_explored(self, goal, res, radius=0.3) -> bool:
         g = self._grid()

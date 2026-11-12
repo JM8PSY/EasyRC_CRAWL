@@ -7,6 +7,8 @@ const ZERO_REPEAT = 3; // 離したときに v=0,w=0 を送る回数（100ms 間
 const TOAST_MS = 3000;
 const GOAL_TAP_PX = 15; // これより短いドラッグは「ロボット→指定点」の向きを使う
 const PAN_THRESHOLD_PX = 4;
+const TAP_PX = 10; // これより動きの小さい押して離すは「タップ」
+const ZONE_CLOSE_PX = 15; // 最初の角のこの距離内をタップすると多角形を閉じる
 const MIN_SCALE = 2; // px/m
 const MAX_SCALE = 600;
 const STORE_V = "cugo_web.maxV";
@@ -55,11 +57,14 @@ const world = {
   goal: null, // {x, y, yaw}
   scan: [],
   plan: [],
+  keepout: [], // [{id, pts: [[x, y], ...]}] 進入禁止エリア（map 座標）
 };
 const view = { cx: 0, cy: 0, scale: 40, w: 0, h: 0, dpr: 1 };
 let follow = true;
 let goalMode = false;
 let goalDrag = null; // {sx, sy, x, y, curSx, curSy}
+// 進入禁止エリアの作図: on = 作図モード中、pts = 追加済みの角 [[x, y], ...]（map 座標）
+const zoneDraw = { on: false, pts: [] };
 
 // LiDAR 取り付け向きの補正
 const calib = {
@@ -215,6 +220,7 @@ function connect() {
   ws.onopen = () => {
     setConn("接続", "ok");
     updateCalibUI();
+    updateZoneBar();
   };
   ws.onmessage = (ev) => {
     let msg;
@@ -235,6 +241,7 @@ function connect() {
     zeroLeft = 0;
     world.scan = [];
     updateCalibUI();
+    updateZoneBar();
     requestDraw();
     setTimeout(connect, RECONNECT_MS);
   };
@@ -267,6 +274,11 @@ function handleMessage(msg) {
     case "msg":
       if (typeof msg.text === "string") toast(msg.text, msg.level);
       break;
+    case "keepout":
+      world.keepout = validZones(msg.zones);
+      updateZoneBar();
+      requestDraw();
+      break;
     case "calib":
       // 保存値だけ更新する。候補値（スライダー）はパネルを開いたときにだけ合わせる
       if (Number.isFinite(msg.lidar_yaw)) {
@@ -286,6 +298,19 @@ function handleMessage(msg) {
 function validPose(p) {
   if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
   return { x: p.x, y: p.y, yaw: Number.isFinite(p.yaw) ? p.yaw : 0 };
+}
+
+// サーバーからの進入禁止エリア一覧を検査する（不正なものは捨てる）
+function validZones(zones) {
+  if (!Array.isArray(zones)) return [];
+  const out = [];
+  for (const z of zones) {
+    if (!z || (typeof z.id !== "string" && typeof z.id !== "number") || !Array.isArray(z.pts)) continue;
+    const pts = z.pts.filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+      .map((p) => [p[0], p[1]]);
+    if (pts.length >= 3) out.push({ id: String(z.id), pts });
+  }
+  return out;
 }
 
 function onMap(msg) {
@@ -386,6 +411,7 @@ function draw() {
   ctx.clearRect(0, 0, view.w, view.h);
 
   drawMapImage();
+  drawKeepout();
   if (calib.open) {
     drawHeadingLine();
     drawScanPreview();
@@ -395,6 +421,7 @@ function draw() {
   drawPlan();
   if (world.goal) drawArrow(world.goal.x, world.goal.y, world.goal.yaw, "#ff7b72", "#ffffff");
   if (goalDrag) drawGoalPreview();
+  if (zoneDraw.on) drawZoneDraft();
   drawRobot();
   drawScaleBar();
 }
@@ -405,6 +432,115 @@ function drawMapImage() {
   const [sx, sy] = toScreen(m.ox, m.oy + m.h * m.res);
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(m.img, sx, sy, m.w * m.res * view.scale, m.h * m.res * view.scale);
+}
+
+// 多角形の重心（面積がほぼ 0 なら頂点の平均）
+function polyCentroid(pts) {
+  let a = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, y0] = pts[i];
+    const [x1, y1] = pts[(i + 1) % pts.length];
+    const c = x0 * y1 - x1 * y0;
+    a += c;
+    cx += (x0 + x1) * c;
+    cy += (y0 + y1) * c;
+  }
+  if (Math.abs(a) > 1e-9) return [cx / (3 * a), cy / (3 * a)];
+  let sx = 0;
+  let sy = 0;
+  for (const [x, y] of pts) {
+    sx += x;
+    sy += y;
+  }
+  return [sx / pts.length, sy / pts.length];
+}
+
+// 点が多角形の内側か（レイキャスト法、map 座標）
+function pointInPoly(x, y, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i];
+    const [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// 進入禁止エリア: 赤い半透明の塗り + 赤い枠 + 重心に「禁止」
+function drawKeepout() {
+  const zones = world.keepout;
+  if (!zones.length) return;
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.font = "bold 12px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const z of zones) {
+    ctx.beginPath();
+    z.pts.forEach(([x, y], i) => {
+      const [sx, sy] = toScreen(x, y);
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,60,60,0.25)";
+    ctx.fill();
+    ctx.strokeStyle = "#ff3c3c";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    const [cx, cy] = toScreen(...polyCentroid(z.pts));
+    ctx.strokeStyle = "#000000aa";
+    ctx.lineWidth = 3;
+    ctx.strokeText("禁止", cx, cy);
+    ctx.fillStyle = "#ffb3ad";
+    ctx.fillText("禁止", cx, cy);
+  }
+  ctx.restore();
+}
+
+// 作図中の多角形: 角は点、辺は破線、最後の角 → 最初の角は薄い破線
+function drawZoneDraft() {
+  const pts = zoneDraw.pts.map(([x, y]) => toScreen(x, y));
+  if (!pts.length) return;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  if (pts.length >= 3) {
+    ctx.beginPath();
+    pts.forEach(([sx, sy], i) => (i === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy)));
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,60,60,0.12)";
+    ctx.fill();
+  }
+  if (pts.length >= 2) {
+    ctx.setLineDash([8, 6]);
+    ctx.strokeStyle = "#ff6b6b";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    pts.forEach(([sx, sy], i) => (i === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy)));
+    ctx.stroke();
+    // 閉じる辺のプレビュー
+    ctx.setLineDash([3, 6]);
+    ctx.strokeStyle = "#ff6b6b99";
+    ctx.beginPath();
+    ctx.moveTo(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    ctx.lineTo(pts[0][0], pts[0][1]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  pts.forEach(([sx, sy], i) => {
+    ctx.beginPath();
+    // 3 点以上なら最初の角を大きく（ここをタップすると閉じる）
+    ctx.arc(sx, sy, i === 0 && pts.length >= 3 ? 7 : 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = i === 0 ? "#ffffff" : "#ff3c3c";
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = i === 0 ? "#ff3c3c" : "#ffffff";
+    ctx.stroke();
+  });
+  ctx.restore();
 }
 
 function drawScan() {
@@ -590,6 +726,7 @@ window.addEventListener("resize", resize);
 // ==== 地図の操作（パン・ピンチ・ホイール・目的地指定）====
 const pointers = new Map(); // pointerId -> {x, y}
 let panMoved = 0;
+let gestureMulti = false; // 今回の操作で 2 本指になった（タップ扱いしない）
 
 function localPos(e) {
   const r = canvas.getBoundingClientRect();
@@ -606,6 +743,7 @@ function goalYaw(g) {
 }
 
 function setGoalMode(on) {
+  if (on) setZoneDraw(false);
   goalMode = on;
   goalDrag = null;
   $("btn-goal").classList.toggle("on", on);
@@ -628,6 +766,7 @@ canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: sx, y: sy });
   panMoved = 0;
+  gestureMulti = pointers.size >= 2; // 1 本目で解除、2 本目以降で設定（全部離すまで維持）
 });
 
 canvas.addEventListener("pointermove", (e) => {
@@ -686,10 +825,43 @@ function endPointer(e, canceled) {
     setGoalMode(false);
     return;
   }
-  pointers.delete(e.pointerId);
+  const had = pointers.delete(e.pointerId);
+  if (!had || pointers.size > 0) return;
+  // 1 本指で、ほとんど動かさずに離した = タップ
+  const tap = !canceled && !gestureMulti && panMoved <= TAP_PX;
+  gestureMulti = false;
+  if (tap) {
+    const [sx, sy] = localPos(e);
+    onMapTap(sx, sy);
+  }
 }
 canvas.addEventListener("pointerup", (e) => endPointer(e, false));
 canvas.addEventListener("pointercancel", (e) => endPointer(e, true));
+
+// 地図のタップ: 作図中は角を追加、通常時は進入禁止エリアの削除
+function onMapTap(sx, sy) {
+  if (zoneDraw.on) {
+    addZonePoint(sx, sy);
+    return;
+  }
+  if (goalMode) return;
+  const [x, y] = toWorld(sx, sy);
+  let zone = null;
+  for (let i = world.keepout.length - 1; i >= 0; i--) {
+    if (pointInPoly(x, y, world.keepout[i].pts)) {
+      zone = world.keepout[i];
+      break;
+    }
+  }
+  if (!zone) return;
+  if (!wsOpen()) {
+    toast("未接続のため削除できません", "warn");
+    return;
+  }
+  resetInput(); // ダイアログ中は keyup が届かないため
+  if (!window.confirm("この進入禁止エリアを削除しますか？")) return;
+  send({ t: "keepout_remove", id: zone.id });
+}
 
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
@@ -743,6 +915,14 @@ $("btn-reset").addEventListener("click", () => {
   send({ t: "reset_map" });
 });
 $("btn-explore").addEventListener("click", toggleExplore);
+$("btn-skip").addEventListener("click", () => {
+  if (!wsOpen()) {
+    toast("未接続のためスキップできません", "warn");
+    return;
+  }
+  send({ t: "explore_skip" });
+});
+$("btn-keepout").addEventListener("click", () => setZoneDraw(!zoneDraw.on));
 $("btn-calib").addEventListener("click", () => {
   if (calib.open) closeCalib();
   else openCalib();
@@ -793,6 +973,7 @@ function setCandidate(d) {
 
 function openCalib() {
   setGoalMode(false);
+  setZoneDraw(false);
   calib.open = true;
   setCandidate(savedDeg()); // 開くたびに保存値に合わせる
   $("calib").hidden = false;
@@ -837,8 +1018,71 @@ $("calib-floor").addEventListener("click", () => {
   toast("カメラの床補正を開始しました");
 });
 
+// ==== 進入禁止エリアの作図 ====
+function setZoneDraw(on) {
+  if (on) {
+    setGoalMode(false);
+    if (calib.open) closeCalib();
+  }
+  zoneDraw.on = on;
+  zoneDraw.pts = [];
+  $("btn-keepout").classList.toggle("on", on);
+  $("view").classList.toggle("zone-mode", on);
+  $("keepout-bar").hidden = !on;
+  updateZoneBar();
+  requestDraw();
+}
+
+function updateZoneBar() {
+  const n = zoneDraw.pts.length;
+  $("keepout-done").disabled = n < 3;
+  $("keepout-undo").disabled = n === 0;
+  $("keepout-clear").disabled = !wsOpen() || world.keepout.length === 0;
+}
+
+function addZonePoint(sx, sy) {
+  const pts = zoneDraw.pts;
+  if (pts.length >= 3) {
+    const [fx, fy] = toScreen(pts[0][0], pts[0][1]);
+    if (Math.hypot(sx - fx, sy - fy) < ZONE_CLOSE_PX) {
+      finishZone();
+      return;
+    }
+  }
+  pts.push(toWorld(sx, sy));
+  updateZoneBar();
+  requestDraw();
+}
+
+function finishZone() {
+  if (zoneDraw.pts.length < 3) return;
+  if (!wsOpen()) {
+    toast("未接続のため進入禁止エリアを送れません", "warn");
+    return;
+  }
+  send({ t: "keepout_add", pts: zoneDraw.pts.map(([x, y]) => [round3(x), round3(y)]) });
+  setZoneDraw(false);
+}
+
+$("keepout-done").addEventListener("click", finishZone);
+$("keepout-undo").addEventListener("click", () => {
+  zoneDraw.pts.pop();
+  updateZoneBar();
+  requestDraw();
+});
+$("keepout-quit").addEventListener("click", () => setZoneDraw(false));
+$("keepout-clear").addEventListener("click", () => {
+  if (!wsOpen()) {
+    toast("未接続のため消せません", "warn");
+    return;
+  }
+  resetInput(); // ダイアログ中は keyup が届かないため
+  if (!window.confirm("進入禁止エリアをすべて消しますか？")) return;
+  send({ t: "keepout_clear" });
+});
+
 // ボタンにフォーカスが残ると Space で押されてしまうので外す
-for (const b of document.querySelectorAll(".toolbar button, #calib button")) {
+for (const b of document.querySelectorAll(".toolbar button, #calib button, #keepout-bar button, #btn-skip")) {
   b.addEventListener("click", () => b.blur());
 }
 
@@ -861,6 +1105,10 @@ window.addEventListener("keydown", (e) => {
   }
   if (k === "escape" && goalMode) {
     setGoalMode(false);
+    return;
+  }
+  if (k === "escape" && zoneDraw.on) {
+    setZoneDraw(false);
     return;
   }
   if (k === "escape" && calib.open) {
@@ -955,6 +1203,7 @@ function setExplore(state, frontiers) {
   const badge = $("explore");
   badge.textContent = running ? (frontiers === null ? "探索中" : `探索中（残り ${frontiers}）`) : "";
   badge.className = "badge" + (running ? " ok" : "");
+  $("btn-skip").hidden = !running;
 }
 
 function toggleExplore() {

@@ -33,6 +33,7 @@ from rcl_interfaces.msg import Parameter as ParameterMsg, ParameterType, Paramet
 from rcl_interfaces.srv import SetParameters
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
+from nav2_msgs.msg import CostmapFilterInfo
 from nav_msgs.msg import OccupancyGrid, Path
 from sensor_msgs.msg import LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
@@ -44,7 +45,7 @@ from ament_index_python.packages import get_package_share_directory
 
 import numpy as np
 
-from cugo_web import calibration, floor, tls
+from cugo_web import calibration, floor, keepout, tls
 from cugo_web.explorer import Explorer
 from cugo_web.geometry import (clamp_drive, occupancy_to_png, path_to_points, png_b64,
                                quat_from_yaw, scan_to_points, valid_map_name, yaw_from_quat)
@@ -97,6 +98,12 @@ class CugoWebNode(Node):
         # ナビ
         self.nav_state = 'idle'
         self.map_raw: Optional[OccupancyGrid] = None
+        # 進入禁止エリア。保存した地図（map_yaml）で起動したときは <地図>.keepout.yaml を使う
+        map_yaml = str(p('map_yaml', '').value)
+        self.keepout_file = (os.path.splitext(map_yaml)[0] + '.keepout.yaml' if map_yaml
+                             else os.path.join(calibration.CONFIG_DIR, 'keepout.yaml'))
+        self.zones = keepout.load(self.keepout_file)
+        self._zone_seq = len(self.zones)
         self.explorer = None  # WebServer が作る（通知先が必要なため）
         self.goal: Optional[dict] = None
         self._goal_handle = None
@@ -107,6 +114,18 @@ class CugoWebNode(Node):
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel_teleop', 10)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE)
+        # Nav2 の KeepoutFilter へ（config/nav2_params.yaml の keepout_filter）
+        self.mask_pub = self.create_publisher(OccupancyGrid, '/keepout_mask', latched)
+        self.filter_info_pub = self.create_publisher(CostmapFilterInfo, '/costmap_filter_info',
+                                                     latched)
+        info = CostmapFilterInfo()
+        info.header.frame_id = self.map_frame
+        info.type = 0  # KEEPOUT
+        info.filter_mask_topic = '/keepout_mask'  # costmap は名前空間内なので絶対名
+        info.base = 0.0
+        info.multiplier = 1.0
+        self.filter_info_pub.publish(info)
+        self.publish_keepout()
         self.create_subscription(String, 'cugo/mode', self._on_mode, latched)
         self.create_subscription(OccupancyGrid, 'map', self._on_map, latched)
         self.create_subscription(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data)
@@ -329,6 +348,55 @@ class CugoWebNode(Node):
         if handle is not None:
             handle.cancel_goal_async()
 
+    # ---------------- 進入禁止エリア ----------------
+    def publish_keepout(self):
+        data, w, h, (ox, oy) = keepout.mask_grid(self.zones)
+        msg = OccupancyGrid()
+        msg.header.frame_id = self.map_frame
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.info.resolution = 0.05
+        msg.info.width, msg.info.height = w, h
+        msg.info.origin.position.x, msg.info.origin.position.y = ox, oy
+        msg.info.origin.orientation.w = 1.0
+        msg.data = data.tolist()
+        self.mask_pub.publish(msg)
+
+    def _zones_changed(self, notify):
+        try:
+            keepout.save(self.zones, self.keepout_file)
+        except OSError as exc:
+            notify('warn', '進入禁止エリアを保存できませんでした: %s' % exc)
+        self.publish_keepout()
+
+    def add_zone(self, pts, notify, on_change):
+        pts = keepout.validate_points(pts)
+        if pts is None:
+            notify('error', '進入禁止エリアの形が不正です（3 点以上で囲んでください）')
+            return
+        if len(self.zones) >= keepout.MAX_ZONES:
+            notify('error', '進入禁止エリアは %d 個までです' % keepout.MAX_ZONES)
+            return
+        self._zone_seq += 1
+        self.zones = self.zones + [{'id': 'z%d' % self._zone_seq, 'pts': pts}]
+        self._zones_changed(notify)
+        notify('info', '進入禁止エリアを追加しました')
+        on_change()
+
+    def remove_zone(self, zone_id, notify, on_change):
+        zones = [z for z in self.zones if z['id'] != zone_id]
+        if len(zones) == len(self.zones):
+            return
+        self.zones = zones
+        self._zones_changed(notify)
+        notify('info', '進入禁止エリアを削除しました')
+        on_change()
+
+    def clear_zones(self, notify, on_change):
+        self.zones = []
+        self._zones_changed(notify)
+        notify('info', '進入禁止エリアをすべて消しました')
+        on_change()
+
     # ---------------- 地図保存 ----------------
     def save_map(self, name, notify):
         if not valid_map_name(name):
@@ -344,6 +412,11 @@ class CugoWebNode(Node):
         def done(fut):
             res = fut.result()
             if res is not None and res.result == SaveMap.Response.RESULT_SUCCESS:
+                if self.zones:
+                    try:
+                        keepout.save(self.zones, req.name.data + '.keepout.yaml')
+                    except OSError:
+                        pass
                 notify('info', '保存しました: %s.yaml' % req.name.data)
             else:
                 notify('error', '地図の保存に失敗しました')
@@ -528,6 +601,14 @@ class WebServer:
                 msg[k] = self.node.calib[k]
         return msg
 
+    def keepout_msg(self):
+        return {'t': 'keepout', 'zones': [{'id': z['id'], 'pts': [list(p) for p in z['pts']]}
+                                          for z in self.node.zones]}
+
+    def send_keepout(self):
+        if self.loop is not None:
+            asyncio.run_coroutine_threadsafe(self.broadcast(self.keepout_msg()), self.loop)
+
     def send_calib(self):
         """ROS スレッドから呼ぶ。"""
         if self.loop is not None:
@@ -554,6 +635,7 @@ class WebServer:
         if node.map_msg is not None:
             await ws.send_str(json.dumps(node.map_msg))
         await ws.send_str(json.dumps(self.calib_msg()))
+        await ws.send_str(json.dumps(self.keepout_msg()))
         drove = False
         try:
             async for m in ws:
@@ -586,6 +668,14 @@ class WebServer:
                         node.explorer.start()
                     else:
                         node.explorer.stop('自動探索を止めました')
+                elif t == 'explore_skip':
+                    node.explorer.skip()
+                elif t == 'keepout_add':
+                    node.add_zone(msg.get('pts'), self.notify, self.send_keepout)
+                elif t == 'keepout_remove':
+                    node.remove_zone(msg.get('id'), self.notify, self.send_keepout)
+                elif t == 'keepout_clear':
+                    node.clear_zones(self.notify, self.send_keepout)
                 elif t == 'calib_floor':
                     node.calib_floor(self.notify, self.send_calib)
         finally:

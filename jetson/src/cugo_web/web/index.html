@@ -13,6 +13,7 @@
     <span id="mode" class="badge"></span>
     <span id="nav" class="badge"></span>
     <span id="explore" class="badge"></span>
+    <button id="btn-skip" type="button" class="badge-btn" hidden>スキップ</button>
     <span id="pad" class="badge ok"></span>
   </header>
   <div id="hint" class="hint" hidden></div>
@@ -26,6 +27,15 @@
       <canvas id="map"></canvas>
       <div id="nomap" class="nomap">地図を待っています…</div>
       <div id="goal-hint" class="goal-hint" hidden>地図をタッチして目的地を指定（ドラッグで向き）</div>
+      <div id="keepout-bar" class="keepout-bar" hidden>
+        <p class="keepout-help">地図をタップして角を追加（3点以上）</p>
+        <div class="keepout-actions">
+          <button id="keepout-done" type="button" class="primary" disabled>完了</button>
+          <button id="keepout-undo" type="button" disabled>1つ戻す</button>
+          <button id="keepout-clear" type="button" class="danger">全部消す</button>
+          <button id="keepout-quit" type="button">やめる</button>
+        </div>
+      </div>
       <div id="toasts" class="toasts"></div>
 
       <section id="calib" class="calib" hidden>
@@ -67,6 +77,7 @@
         <button id="btn-fit" type="button">全体</button>
         <button id="btn-calib" type="button">LiDAR補正</button>
         <button id="btn-reset" type="button">地図リセット</button>
+        <button id="btn-keepout" type="button">進入禁止</button>
       </nav>
 
       <section class="sliders">
@@ -85,7 +96,7 @@
       <section class="controls">
         <div id="joy" class="joy"><div id="knob" class="knob"></div></div>
         <div class="help">
-          <b>W/S</b> 前進/後退<br><b>A/D</b> 旋回<br><b>Space</b> 停止
+          <b>W/S</b> 前進/後退<br><b>A/D</b> 旋回<br><b>Space</b> 停止<br><b>Esc</b> モード解除
         </div>
         <button id="stop" class="stop" type="button">停止<br><small>Space</small></button>
       </section>
