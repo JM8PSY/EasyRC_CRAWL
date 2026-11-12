@@ -188,3 +188,29 @@ def test_isolated_cell_removed_by_neighbor_filter():
     assert any(abs(x - 1.025) < 0.01 for x in m0[:, 0])
     assert not any(abs(x - 1.025) < 0.01 for x in m2[:, 0])
     assert len(m2) >= 10
+
+
+def test_mirror_of_wall_on_glossy_floor_rejected():
+    """実機で起きた例: 光沢床に映った壁の鏡像が、壁と同じ xy・床の下に出る。"""
+    floor = grid(0.3, 1.2, -0.5, 0.5, 0.0)
+    xs, zs = np.meshgrid(np.arange(1.2, 1.25, 0.01), np.arange(0.02, 0.5, 0.01))
+    wall = np.column_stack([np.repeat(xs.ravel(), 40), np.tile(np.linspace(-0.4, 0.4, 40), xs.size),
+                            np.repeat(zs.ravel(), 40)])
+    mirror = wall.copy()
+    mirror[:, 2] *= -1
+    pts = noisy(np.vstack([floor, wall, mirror]))
+    assert len(detect(pts, camera_origin=CAM)[0]) > 0
+    assert len(detect(pts, camera_origin=CAM, mirror_radius=0.15)[0]) == 0
+
+
+def test_far_low_points_ignored():
+    pts = np.vstack([grid(0.3, 1.2, -0.5, 0.5, 0.0), grid(2.6, 3.0, -0.3, 0.3, -0.5)])
+    assert len(detect(pts, camera_origin=CAM)[0]) > 0
+    assert len(detect(pts, camera_origin=CAM, max_low_range=2.2)[0]) == 0
+
+
+def test_mirror_filter_keeps_real_step():
+    pts = np.vstack([grid(0.3, 0.8, -0.5, 0.5, 0.0), grid(1.63, 1.95, -0.5, 0.5, -0.17)])
+    m = detect(noisy(pts), camera_origin=CAM, mirror_radius=0.15, max_low_range=2.2,
+               drop_per_meter=0.05, min_points=5, min_neighbors=2)[0]
+    assert len(m) > 20

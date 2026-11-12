@@ -109,6 +109,37 @@ def level_to_floor(pts: np.ndarray, origin: Optional[Sequence[float]] = None, **
     return out, o, (a, b, c)
 
 
+def mirror_mask(pts: np.ndarray, low: np.ndarray, *, cell: float = 0.05, radius: float = 0.10,
+                obstacle_z: float = 0.05, min_points: int = 3) -> np.ndarray:
+    """光沢床の映り込み（鏡像）とみなす低い点を True で返す。
+
+    つるつるの床は鏡になり、深度カメラは壁や物の鏡像を「床の下」にある物として測る。
+    鏡像は実物と同じ xy に、高さだけ反転して現れる（実機: 1.2〜1.6 m 先の壁の真下に
+    -0.1〜-0.3 m の点が大量に出た）。本物の下の段の上に壁は立っていないので、
+    床より高い点（obstacle_z 超）が min_points 個以上あるセルから radius 以内にある低い点は捨てる。
+    pts は観測位置（視線に沿って移す前）で渡すこと。
+    """
+    out = np.zeros(len(pts), dtype=bool)
+    if not low.any():
+        return out
+    high = pts[:, 2] > obstacle_z
+    if not high.any():
+        return out
+    ix = np.floor(pts[:, 0] / cell).astype(np.int64)
+    iy = np.floor(pts[:, 1] / cell).astype(np.int64)
+    span = 1 << 20
+    hk, hc = np.unique((ix[high] << 21) + (iy[high] + span), return_counts=True)
+    hk = hk[hc >= min_points]
+    if len(hk) == 0:
+        return out
+    k = int(np.ceil(radius / cell - 1e-9))
+    hx, hy = hk >> 21, (hk & ((1 << 21) - 1)) - span
+    dil = np.unique(np.concatenate([((hx + dx) << 21) + (hy + dy + span)
+                                    for dx in range(-k, k + 1) for dy in range(-k, k + 1)]))
+    out[low] = np.isin((ix[low] << 21) + (iy[low] + span), dil)
+    return out
+
+
 def _empty() -> np.ndarray:
     return np.zeros((0, 3), dtype=np.float64)
 
@@ -117,7 +148,8 @@ def detect(points_xyz_base: np.ndarray, *, cell: float = 0.05, drop_threshold: f
            floor_band: float = 0.03, min_points: int = 3,
            x_range: Tuple[float, float] = (0.2, 2.0), y_abs_max: float = 1.5,
            mark_z: float = 0.1, camera_origin: Optional[Sequence[float]] = None,
-           drop_per_meter: float = 0.0, min_neighbors: int = 0) -> Tuple[np.ndarray, np.ndarray]:
+           drop_per_meter: float = 0.0, min_neighbors: int = 0,
+           mirror_radius: float = 0.0, max_low_range: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
     """base 座標の点 (N, 3) から (marks (M, 3), clears (K, 3)) を返す。
 
     camera_origin を渡すと低い点（z < -drop_threshold）を視線に沿って z = 0 の位置へ移す
@@ -130,6 +162,14 @@ def detect(points_xyz_base: np.ndarray, *, cell: float = 0.05, drop_threshold: f
 
     min_neighbors: 崖セルは周り 8 セルに崖セルがこの数以上あるものだけ残す。段差の縁は
     セルが線状に並ぶが、反射・ノイズの誤検出はぽつんと 1 セルだけ出ることが多い。
+
+    mirror_radius > 0: 床より高い物の真下（この距離以内）にある低い点を鏡像として捨てる
+    （mirror_mask 参照）。
+
+    max_low_range > 0: カメラから水平にこれより遠い低い点は使わない。遠くの低い点は、
+    視野外の物（天井の照明・壁の上の方）の鏡像であることが多く、実物が見えないので
+    mirror_mask で消せない。下の段は縁までの距離の約 2 倍の所に見えるので、
+    2.2 m なら縁が約 1.2 m 以内の段差まで検出できる。
     """
     pts = np.asarray(points_xyz_base, dtype=np.float64).reshape(-1, 3)
     pts = pts[np.isfinite(pts).all(axis=1)]
@@ -144,6 +184,14 @@ def detect(points_xyz_base: np.ndarray, *, cell: float = 0.05, drop_threshold: f
     else:
         zj = pts[:, 2]
     low = zj < -drop_threshold
+    if max_low_range > 0.0 and low.any():
+        o = camera_origin if camera_origin is not None else (0.0, 0.0, 0.0)
+        far = low & (np.hypot(pts[:, 0] - o[0], pts[:, 1] - o[1]) > max_low_range)
+        pts, zj, low = pts[~far], zj[~far], low[~far]
+    if mirror_radius > 0.0 and low.any():
+        mirror = mirror_mask(pts, low, cell=cell, radius=mirror_radius)
+        keep = ~mirror
+        pts, zj, low = pts[keep], zj[keep], low[keep]
     if camera_origin is not None and low.any():
         pts = pts.copy()
         pts[low] = project_to_floor(pts[low], camera_origin)

@@ -73,6 +73,10 @@ class CliffDetector(Node):
             'drop_per_meter': float(p('drop_per_meter', 0.05).value),
             # 周り 8 セルに崖セルがこれ以上ある崖セルだけ残す（ぽつんと出る誤検出を消す）
             'min_neighbors': int(p('min_neighbors', 2).value),
+            # 床より高い物の真下この距離以内の低い点は光沢床の鏡像として捨てる [m]
+            'mirror_radius': float(p('mirror_radius', 0.15).value),
+            # カメラからこれより遠い低い点は使わない（視野外の物の鏡像対策）[m]
+            'max_low_range': float(p('max_low_range', 2.2).value),
             'floor_band': float(p('floor_band', 0.03).value),
             'min_points': int(p('min_points', 5).value),
             'x_range': (float(p('x_min', 0.2).value), float(p('x_max', 2.0).value)),
