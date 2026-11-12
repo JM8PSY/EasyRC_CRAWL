@@ -59,6 +59,17 @@ source install/setup.bash
 
 ## 3. 起動
 
+### 起動時に自動で立ち上げる（systemd）
+
+```bash
+bash ~/EasyRC_CRAWL/jetson/scripts/install_service.sh   # 1 回だけ（sudo）
+```
+
+電源を入れて約 30 秒で bringup と Web UI が起動する。Web UI は `http://thisisjetson.local:8080/`（IP が変わっても使える）。
+起動引数は `~/.config/cugo.env` の `CUGO_ARGS="mode:=slam"` で変更。ログ `journalctl -u cugo -f`、
+再起動 `sudo systemctl restart cugo`、停止 `sudo systemctl stop cugo`、自動起動をやめる `sudo systemctl disable cugo`。
+サービス起動中に手動で `ros2 launch` を重ねて起動しないこと。
+
 ### Web UI（おすすめ）
 
 bringup を起動すると Web UI も立ち上がる（`use_web:=false` で無効）。同じ LAN のスマホ・PC のブラウザで

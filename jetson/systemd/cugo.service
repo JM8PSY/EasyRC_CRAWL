@@ -1,0 +1,20 @@
+# CuGo 自律移動スタック（bringup + Web UI）を起動時に立ち上げる。
+# インストール: bash ~/EasyRC_CRAWL/jetson/scripts/install_service.sh
+[Unit]
+Description=CuGo bringup (sensors, SLAM, Nav2, Web UI :8080)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+ExecStart=__REPO__/jetson/scripts/run_bringup.sh
+# ros2 launch は SIGINT で子プロセスを順に止める（cugo_base は終了時に $S を送る）
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
