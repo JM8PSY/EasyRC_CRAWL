@@ -66,7 +66,10 @@ def safe_free_mask(grid, resolution, robot_radius=0.30, free_thresh=25, occ_thre
 
 def _path_distances(safe: np.ndarray, start: Tuple[int, int], start_cost: float,
                     resolution: float) -> np.ndarray:
-    """8-connected Dijkstra (diagonal cost sqrt2) over safe cells. Returns metres, inf = unreached."""
+    """8-connected Dijkstra (diagonal cost sqrt2) over safe cells.
+
+    Returns metres, inf = unreached.
+    """
     h, w = safe.shape
     # Pad with a non-traversable border so neighbour offsets need no bounds checks.
     pw = w + 2

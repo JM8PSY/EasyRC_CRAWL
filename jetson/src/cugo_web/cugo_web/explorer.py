@@ -150,7 +150,8 @@ class Explorer:
                     % (goal.x, goal.y, goal.size, goal.distance, getattr(goal, 'score', 0.0)))
                 t0 = time.monotonic()
                 result = self._go(goal, res)
-                self.node.get_logger().info('explore: %s after %.1fs' % (result, time.monotonic() - t0))
+                self.node.get_logger().info('explore: %s after %.1fs'
+                                            % (result, time.monotonic() - t0))
                 if self._stop.is_set():
                     return
                 moving = result == 'explored'
