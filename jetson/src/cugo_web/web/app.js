@@ -50,6 +50,13 @@ let follow = true;
 let goalMode = false;
 let goalDrag = null; // {sx, sy, x, y, curSx, curSy}
 
+// LiDAR 取り付け向きの補正
+const calib = {
+  saved: null, // サーバーに保存されている lidar_yaw [rad]（未受信なら null）
+  open: false, // 補正パネル表示中
+  candDeg: 0, // 候補値 [deg]（整数、-180〜180）
+};
+
 // ==== 設定（速度スライダー）====
 function loadNum(key, def, min, max) {
   try {
@@ -185,7 +192,10 @@ function toast(text, level) {
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   setConn("接続中…", "warn");
-  ws.onopen = () => setConn("接続", "ok");
+  ws.onopen = () => {
+    setConn("接続", "ok");
+    updateCalibUI();
+  };
   ws.onmessage = (ev) => {
     let msg;
     try {
@@ -203,6 +213,7 @@ function connect() {
     resetInput();
     zeroLeft = 0;
     world.scan = [];
+    updateCalibUI();
     requestDraw();
     setTimeout(connect, RECONNECT_MS);
   };
@@ -230,6 +241,14 @@ function handleMessage(msg) {
       break;
     case "msg":
       if (typeof msg.text === "string") toast(msg.text, msg.level);
+      break;
+    case "calib":
+      // 保存値だけ更新する。候補値（スライダー）はパネルを開いたときにだけ合わせる
+      if (Number.isFinite(msg.lidar_yaw)) {
+        calib.saved = msg.lidar_yaw;
+        updateCalibUI();
+        requestDraw();
+      }
       break;
   }
 }
@@ -337,7 +356,12 @@ function draw() {
   ctx.clearRect(0, 0, view.w, view.h);
 
   drawMapImage();
-  drawScan();
+  if (calib.open) {
+    drawHeadingLine();
+    drawScanPreview();
+  } else {
+    drawScan();
+  }
   drawPlan();
   if (world.goal) drawArrow(world.goal.x, world.goal.y, world.goal.yaw, "#ff7b72", "#ffffff");
   if (goalDrag) drawGoalPreview();
@@ -363,6 +387,61 @@ function drawScan() {
     ctx.rect(sx - 1.5, sy - 1.5, 3, 3);
   }
   ctx.fill();
+}
+
+// 補正プレビュー: 候補値と保存値の差だけ、ロボット位置を中心にスキャン点を回して描く
+function drawScanPreview() {
+  const pts = world.scan;
+  if (!pts.length) return;
+  const p = world.pose;
+  const delta = calibDelta();
+  const c = Math.cos(delta);
+  const s = Math.sin(delta);
+  ctx.fillStyle = "#ffd60a";
+  ctx.beginPath();
+  for (let i = 0; i + 1 < pts.length; i += 2) {
+    let x = pts[i];
+    let y = pts[i + 1];
+    if (p) {
+      const dx = x - p.x;
+      const dy = y - p.y;
+      x = p.x + c * dx - s * dy;
+      y = p.y + s * dx + c * dy;
+    }
+    const [sx, sy] = toScreen(x, y);
+    ctx.rect(sx - 2, sy - 2, 4, 4);
+  }
+  ctx.fill();
+}
+
+// ロボットの正面方向に 2 m の線と「前」ラベル
+const HEADING_LINE_M = 2;
+function drawHeadingLine() {
+  const p = world.pose;
+  if (!p) return;
+  const [sx, sy] = toScreen(p.x, p.y);
+  const [ex, ey] = toScreen(p.x + HEADING_LINE_M * Math.cos(p.yaw), p.y + HEADING_LINE_M * Math.sin(p.yaw));
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.setLineDash([8, 6]);
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(ex, ey);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = "bold 14px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const lx = ex + 12 * Math.cos(p.yaw);
+  const ly = ey - 12 * Math.sin(p.yaw);
+  ctx.strokeStyle = "#000000cc";
+  ctx.lineWidth = 3;
+  ctx.strokeText("前", lx, ly);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillText("前", lx, ly);
+  ctx.restore();
 }
 
 function drawPlan() {
@@ -624,8 +703,94 @@ $("btn-save").addEventListener("click", () => {
   }
   send({ t: "save_map", name: trimmed });
 });
+$("btn-reset").addEventListener("click", () => {
+  if (!wsOpen()) {
+    toast("未接続のためリセットできません", "warn");
+    return;
+  }
+  resetInput(); // ダイアログ中は keyup が届かないため
+  if (!window.confirm("地図を消して作り直しますか？")) return;
+  send({ t: "reset_map" });
+});
+$("btn-calib").addEventListener("click", () => {
+  if (calib.open) closeCalib();
+  else openCalib();
+});
+
+// ==== LiDAR 補正パネル ====
+const RAD = Math.PI / 180;
+
+// 角度 [deg] を -180〜180 に収める
+function wrapDeg(d) {
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+function fmtDeg(d) {
+  const r = Math.round(d);
+  return `${r > 0 ? "+" : ""}${r}°`;
+}
+function savedDeg() {
+  return calib.saved === null ? 0 : wrapDeg(Math.round(calib.saved / RAD));
+}
+// プレビューで回す量 [rad] = 候補 - 保存値
+function calibDelta() {
+  return calib.candDeg * RAD - (calib.saved === null ? 0 : calib.saved);
+}
+
+function updateCalibUI() {
+  $("calib-saved").textContent = calib.saved === null ? "—" : fmtDeg(savedDeg());
+  $("calib-cand").textContent = fmtDeg(calib.candDeg);
+  $("calib-apply").disabled = !wsOpen();
+}
+
+function setCandidate(d) {
+  calib.candDeg = wrapDeg(Math.round(d));
+  $("calib-slider").value = String(calib.candDeg);
+  updateCalibUI();
+  requestDraw();
+}
+
+function openCalib() {
+  setGoalMode(false);
+  calib.open = true;
+  setCandidate(savedDeg()); // 開くたびに保存値に合わせる
+  $("calib").hidden = false;
+  $("view").classList.add("calib-open");
+  $("btn-calib").classList.add("on");
+  requestDraw();
+}
+
+function closeCalib() {
+  calib.open = false;
+  $("calib").hidden = true;
+  $("view").classList.remove("calib-open");
+  $("btn-calib").classList.remove("on");
+  requestDraw();
+}
+
+$("calib-slider").addEventListener("input", (e) => setCandidate(Number(e.target.value)));
+$("calib-slider").addEventListener("change", (e) => e.target.blur()); // キーボード操作（WASD）に戻す
+for (const b of document.querySelectorAll("#calib .calib-steps button")) {
+  b.addEventListener("click", () => setCandidate(calib.candDeg + Number(b.dataset.step)));
+}
+$("calib-cancel").addEventListener("click", closeCalib);
+$("calib-apply").addEventListener("click", () => {
+  if (!wsOpen()) {
+    toast("未接続のため適用できません", "warn");
+    return;
+  }
+  const yaw = Math.round(calib.candDeg * RAD * 10000) / 10000;
+  send({ t: "set_lidar_yaw", yaw });
+  resetInput(); // ダイアログ中は keyup が届かないため
+  if (window.confirm("地図をリセットしますか？（向きを変えたあとは作り直しを推奨）")) {
+    send({ t: "reset_map" });
+  }
+  closeCalib();
+});
+
 // ボタンにフォーカスが残ると Space で押されてしまうので外す
-for (const b of document.querySelectorAll(".toolbar button")) {
+for (const b of document.querySelectorAll(".toolbar button, #calib button")) {
   b.addEventListener("click", () => b.blur());
 }
 
@@ -648,6 +813,10 @@ window.addEventListener("keydown", (e) => {
   }
   if (k === "escape" && goalMode) {
     setGoalMode(false);
+    return;
+  }
+  if (k === "escape" && calib.open) {
+    closeCalib();
     return;
   }
   if (DRIVE_KEYS.has(k) && sending && wsOpen()) keys.add(k);

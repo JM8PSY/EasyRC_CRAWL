@@ -140,6 +140,49 @@ header {
 .toast.warn { background: #d29922ee; color: #000; }
 .toast.error { background: #da3633ee; color: #fff; }
 .toast.fade { opacity: 0; }
+/* 補正パネル表示中はトーストを上に出す（パネルと重ならないように） */
+.view.calib-open .toasts { top: 8px; bottom: auto; }
+
+/* ---- LiDAR 補正パネル（地図の下部に重ねる）---- */
+.calib {
+  position: absolute;
+  left: 8px; right: 8px; bottom: 8px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #1c2128e6;
+  border: 1px solid #ffffff22;
+  box-shadow: 0 2px 12px #000a;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+.calib[hidden] { display: none; }
+.calib-help { margin: 0; font-size: 12px; line-height: 1.4; color: #f2cc60; }
+.calib-vals { display: flex; justify-content: space-around; color: var(--muted); }
+.calib-vals b { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 4px; }
+#calib-cand { color: #ffd60a; }
+.calib input[type="range"] { width: 100%; height: 24px; margin: 0; accent-color: #ffd60a; }
+.calib-steps, .calib-actions { display: flex; gap: 4px; }
+.calib button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 2px;
+  border: 1px solid #ffffff22;
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.calib button:active { filter: brightness(0.8); }
+.calib button.primary { background: var(--blue); border-color: var(--blue); font-weight: 700; }
+.calib button:disabled { opacity: 0.4; cursor: default; filter: none; }
 
 /* ---- 操作パネル ---- */
 .panel {
@@ -152,11 +195,12 @@ header {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 6px 8px;
 }
 .toolbar button {
-  flex: 1 1 0;
+  flex: 1 1 22%;
   min-width: 0;
   min-height: 38px;
   padding: 4px 2px;
@@ -172,6 +216,7 @@ header {
 .toolbar button:active { filter: brightness(0.8); }
 .toolbar button.on { background: var(--blue); border-color: var(--blue); }
 #btn-cancel { color: #ffa198; }
+#btn-reset { color: #ffa198; }
 
 .sliders { padding: 0 12px; }
 .slider {
@@ -270,4 +315,6 @@ header {
   .knob { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
   .stop { width: 84px; height: 84px; font-size: 19px; }
   .controls { padding: 4px 16px 8px; }
+  .calib { gap: 4px; padding: 6px 8px; }
+  .calib button { min-height: 28px; }
 }
