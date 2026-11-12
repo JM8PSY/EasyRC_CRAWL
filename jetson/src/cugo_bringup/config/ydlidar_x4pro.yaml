@@ -25,4 +25,6 @@ ydlidar_ros2_driver_node:
     range_max: 10.0          # X4 PRO 公称 0.12〜10m
     range_min: 0.12
     frequency: 10.0          # Hz
+    # humble 版ドライバはこの値を読むだけで使わない（反射なしは常に 0）。
+    # 0 → +inf の変換は cugo_perception の scan_inf が行う
     invalid_range_is_inf: false

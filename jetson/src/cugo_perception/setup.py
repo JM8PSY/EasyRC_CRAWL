@@ -23,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'cliff_detector = cugo_perception.cliff_node:main',
+            'scan_inf = cugo_perception.scan_inf:main',
         ],
     },
 )

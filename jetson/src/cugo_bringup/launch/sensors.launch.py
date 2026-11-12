@@ -3,6 +3,8 @@
 - D455 の TF は realsense2_camera が camera_link 以下（光学系・IMU フレーム）を出す。
   camera_link の親（base_link）は URDF（robot_state_publisher）が出すので、ここでは出さない。
 - トピック: /camera/camera/imu, /camera/camera/depth/color/points, /scan
+- X4 PRO のドライバは /scan_raw に出し、cugo_perception の scan_inf が「反射なし」の 0 を +inf に
+  直して /scan に出す（ドライバの invalid_range_is_inf は使われていないため）
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -69,6 +71,15 @@ def generate_launch_description():
         output='screen',
         emulate_tty=True,
         parameters=[lidar_params, {'port': lidar_port}],
+        remappings=[('scan', 'scan_raw')],
+    )
+
+    scan_inf = Node(
+        condition=IfCondition(use_lidar),
+        package='cugo_perception',
+        executable='scan_inf',
+        name='scan_inf',
+        output='screen',
     )
 
     return LaunchDescription([
@@ -81,4 +92,5 @@ def generate_launch_description():
         DeclareLaunchArgument('color_profile', default_value='640,360,15'),
         realsense,
         lidar,
+        scan_inf,
     ])

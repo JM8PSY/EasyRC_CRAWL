@@ -163,7 +163,11 @@ local_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 3.0
+          # 反射なし（scan_inf が +inf にする）を「最大距離まで何もない」として障害物を消す。
+          # inf は range_max - ε に置き換えられるので、obstacle_max_range は range_max（10m）未満に保つこと
+          inf_is_valid: true
+          # 遠くまで消す（通り過ぎた人などの跡が全体の障害物マップに残らないように）。X4 PRO は 10m
+          raytrace_max_range: 9.5
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
@@ -186,7 +190,7 @@ local_costmap:
           max_obstacle_height: 0.5    # これより高い点（天井・机の天板より上）は無視。車体高さ + 余裕
           marking: True
           clearing: True
-          raytrace_max_range: 3.0
+          raytrace_max_range: 4.0     # D455 の clip_distance（4m）まで
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.2
@@ -255,7 +259,11 @@ global_costmap:
           clearing: True
           marking: True
           data_type: "LaserScan"
-          raytrace_max_range: 3.0
+          # 反射なし（scan_inf が +inf にする）を「最大距離まで何もない」として障害物を消す。
+          # inf は range_max - ε に置き換えられるので、obstacle_max_range は range_max（10m）未満に保つこと
+          inf_is_valid: true
+          # 遠くまで消す（通り過ぎた人などの跡が全体の障害物マップに残らないように）。X4 PRO は 10m
+          raytrace_max_range: 9.5
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.0
@@ -276,7 +284,7 @@ global_costmap:
           max_obstacle_height: 0.5
           marking: True
           clearing: True
-          raytrace_max_range: 3.0
+          raytrace_max_range: 4.0     # D455 の clip_distance（4m）まで
           raytrace_min_range: 0.0
           obstacle_max_range: 2.5
           obstacle_min_range: 0.2
