@@ -59,6 +59,17 @@ source install/setup.bash
 
 ## 3. 起動
 
+### Web UI（おすすめ）
+
+bringup を起動すると Web UI も立ち上がる（`use_web:=false` で無効）。同じ LAN のスマホ・PC のブラウザで
+`http://<JetsonのIP>:8080/` を開く。
+
+- ジョイスティック（PC は WASD）で手動操縦（`/cmd_vel_teleop`、Nav2 より優先。離して 0.5 秒で Nav2 に戻る）
+- 地図・ロボット・LiDAR の点・経路の表示（ピンチ / ホイールで拡大、ドラッグで移動）
+- 「目的地」→ 地図をタップ（ドラッグで向き）で Nav2 のゴール、「中止」で取り消し
+- 「地図保存」で `~/maps/<名前>.yaml`（mode:=slam のとき）
+- 停止ボタン / Space: 0 を送り、ゴールも取り消す。タブ切替・切断でも止まる
+
 ### 地図を作る（mode:=slam）
 
 ```bash

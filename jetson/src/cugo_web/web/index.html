@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>CuGo Nav</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <span class="title">CuGo Nav</span>
+    <span id="conn" class="badge off">切断</span>
+    <span id="mode" class="badge"></span>
+    <span id="nav" class="badge"></span>
+  </header>
+  <div id="hint" class="hint" hidden></div>
+
+  <div class="layout">
+    <main id="view" class="view">
+      <canvas id="map"></canvas>
+      <div id="nomap" class="nomap">地図を待っています…</div>
+      <div id="goal-hint" class="goal-hint" hidden>地図をタッチして目的地を指定（ドラッグで向き）</div>
+      <div id="toasts" class="toasts"></div>
+    </main>
+
+    <aside class="panel">
+      <nav class="toolbar">
+        <button id="btn-goal" type="button">目的地</button>
+        <button id="btn-cancel" type="button">中止</button>
+        <button id="btn-save" type="button">地図保存</button>
+        <button id="btn-follow" type="button" class="on">ロボット追従</button>
+        <button id="btn-fit" type="button">全体</button>
+      </nav>
+
+      <section class="sliders">
+        <div class="slider">
+          <label for="max-v">最高速度</label>
+          <input id="max-v" type="range" min="0.05" max="0.40" step="0.05" value="0.25">
+          <span id="max-v-val" class="slider-val">0.25 m/s</span>
+        </div>
+        <div class="slider">
+          <label for="max-w">旋回速度</label>
+          <input id="max-w" type="range" min="0.2" max="1.5" step="0.1" value="0.8">
+          <span id="max-w-val" class="slider-val">0.8 rad/s</span>
+        </div>
+      </section>
+
+      <section class="controls">
+        <div id="joy" class="joy"><div id="knob" class="knob"></div></div>
+        <div class="help">
+          <b>W/S</b> 前進/後退<br><b>A/D</b> 旋回<br><b>Space</b> 停止
+        </div>
+        <button id="stop" class="stop" type="button">停止<br><small>Space</small></button>
+      </section>
+    </aside>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

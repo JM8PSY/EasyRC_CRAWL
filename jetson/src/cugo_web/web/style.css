@@ -1,0 +1,273 @@
+:root {
+  --bg: #111418;
+  --panel: #1c2128;
+  --panel2: #262c35;
+  --text: #e6e9ee;
+  --muted: #8b949e;
+  --ok: #2ea043;
+  --off: #6e7681;
+  --warn: #d29922;
+  --danger: #da3633;
+  --accent: #58a6ff;
+  --blue: #1f6feb;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", sans-serif;
+  touch-action: none;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  overflow: hidden;
+}
+
+body { display: flex; flex-direction: column; }
+
+/* ---- 上部バー ---- */
+header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  padding-top: max(6px, env(safe-area-inset-top));
+  background: var(--panel);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.title { font-weight: 700; margin-right: 4px; }
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--off);
+  color: #fff;
+  white-space: nowrap;
+}
+.badge:empty { display: none; }
+.badge.ok { background: var(--ok); }
+.badge.off { background: var(--off); }
+.badge.warn { background: var(--warn); color: #000; }
+.badge.auto { background: var(--blue); }
+.badge.err { background: var(--danger); }
+
+.hint {
+  padding: 4px 12px;
+  font-size: 12px;
+  background: #3d2e00;
+  color: #f2cc60;
+  flex-shrink: 0;
+}
+.hint.err { background: #4a1517; color: #ffa198; }
+.hint[hidden] { display: none; }
+
+/* ---- 全体レイアウト（縦: 地図の下に操作 / 横: 右に操作）---- */
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.view {
+  position: relative;
+  flex: 1;
+  min-height: 120px;
+  overflow: hidden;
+  background: #0b0d10;
+}
+.view canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+.view.goal-mode canvas { cursor: crosshair; }
+
+.nomap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 15px;
+  pointer-events: none;
+}
+.nomap[hidden] { display: none; }
+
+.goal-hint {
+  position: absolute;
+  top: 8px; left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #1f6febdd;
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.goal-hint[hidden] { display: none; }
+
+.toasts {
+  position: absolute;
+  left: 8px; right: 8px; bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+.toast {
+  max-width: 100%;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #30363dee;
+  color: var(--text);
+  box-shadow: 0 2px 8px #0008;
+  transition: opacity 0.3s;
+}
+.toast.warn { background: #d29922ee; color: #000; }
+.toast.error { background: #da3633ee; color: #fff; }
+.toast.fade { opacity: 0; }
+
+/* ---- 操作パネル ---- */
+.panel {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+}
+.toolbar button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 38px;
+  padding: 4px 2px;
+  border: 1px solid #ffffff22;
+  border-radius: 8px;
+  background: var(--panel2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  font-family: inherit;
+}
+.toolbar button:active { filter: brightness(0.8); }
+.toolbar button.on { background: var(--blue); border-color: var(--blue); }
+#btn-cancel { color: #ffa198; }
+
+.sliders { padding: 0 12px; }
+.slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.slider label { width: 4.5em; flex-shrink: 0; }
+.slider input { flex: 1; min-width: 0; accent-color: var(--accent); height: 24px; }
+.slider-val {
+  width: 5.5em;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 20px 12px;
+}
+
+.stop {
+  width: 96px; height: 96px;
+  border-radius: 50%;
+  border: 4px solid #fff3;
+  background: var(--danger);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: inherit;
+  touch-action: none;
+}
+.stop:active { filter: brightness(0.8); }
+.stop small { font-size: 11px; font-weight: 400; opacity: 0.8; }
+
+.help { color: var(--muted); font-size: 12px; text-align: center; line-height: 1.7; display: none; }
+
+.joy {
+  position: relative;
+  width: 124px; height: 124px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 2px solid #ffffff22;
+  flex-shrink: 0;
+  touch-action: none;
+}
+.knob {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 52px; height: 52px;
+  margin: -26px 0 0 -26px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 2px 8px #0008;
+  pointer-events: none;
+}
+
+/* マウス操作の PC ではキー操作のヘルプを出す */
+@media (hover: hover) and (pointer: fine) {
+  .help { display: block; }
+}
+
+/* 横向き・PC: 地図を左、操作パネルを右に */
+@media (orientation: landscape) and (min-width: 600px) {
+  .layout { flex-direction: row; }
+  .panel {
+    width: 320px;
+    overflow-y: auto;
+    border-left: 1px solid #ffffff14;
+    justify-content: flex-end;
+  }
+  .toolbar { flex-wrap: wrap; }
+  .toolbar button { flex: 1 1 30%; }
+  .controls { padding: 12px 20px 16px; }
+}
+
+@media (orientation: landscape) and (min-width: 600px) and (min-height: 600px) {
+  .joy { width: 160px; height: 160px; }
+  .knob { width: 64px; height: 64px; margin: -32px 0 0 -32px; }
+  .stop { width: 110px; height: 110px; }
+}
+
+/* 低い横画面（スマホ横向き）ではさらに詰める */
+@media (orientation: landscape) and (max-height: 420px) {
+  header { padding-top: 4px; padding-bottom: 4px; }
+  .toolbar button { min-height: 32px; }
+  .joy { width: 110px; height: 110px; }
+  .knob { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
+  .stop { width: 84px; height: 84px; font-size: 19px; }
+  .controls { padding: 4px 16px 8px; }
+}

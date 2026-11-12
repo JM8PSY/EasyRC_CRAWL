@@ -7,6 +7,7 @@
 rf2o + EKF、slam_toolbox（slam）または map_server + AMCL（nav）、Nav2、twist_mux、（任意で）RViz。
 use_base:=false で cugo_base を起動しない（モーターに一切つながない。センサーと計算だけの確認用）。
 use_nav:=false で Nav2 を起動しない（手動で走らせて地図だけ作るとき）。
+Web UI: ブラウザで http://<JetsonのIP>:8080/（use_web:=false で起動しない）。
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
@@ -40,6 +41,7 @@ def generate_launch_description():
     use_nav = LaunchConfiguration('use_nav')
     base_port = LaunchConfiguration('base_port')
     lidar_port = LaunchConfiguration('lidar_port')
+    use_web = LaunchConfiguration('use_web')
 
     is_slam = IfCondition(EqualsSubstitution(mode, 'slam'))
     is_nav = IfCondition(EqualsSubstitution(mode, 'nav'))
@@ -57,6 +59,8 @@ def generate_launch_description():
                               description='false で cugo_base（ESP32 ブリッジ）を起動しない'),
         DeclareLaunchArgument('use_nav', default_value='true',
                               description='false で Nav2 を起動しない'),
+        DeclareLaunchArgument('use_web', default_value='true',
+                              description='Web UI（http://<JetsonのIP>:8080/）を起動する'),
         DeclareLaunchArgument('base_port', default_value='/dev/cugo_esp32'),
         DeclareLaunchArgument('lidar_port', default_value='/dev/cugo_lidar'),
 
@@ -69,6 +73,7 @@ def generate_launch_description():
         _include('cugo_bringup', 'localization.launch.py', is_nav, {'map': map_yaml}),
         _include('cugo_bringup', 'navigation.launch.py', IfCondition(use_nav)),
         _include('cugo_bringup', 'twist_mux.launch.py'),
+        _include('cugo_web', 'cugo_web.launch.py', IfCondition(use_web)),
 
         Node(
             condition=IfCondition(use_rviz),
