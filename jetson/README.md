@@ -230,3 +230,15 @@ ros2 topic echo /cugo/mode
 - Jazzy の navigation_launch.py は docking_server の `cmd_vel` をリマップしないので、`navigation.launch.py` で
   `SetRemap(cmd_vel → cmd_vel_nav)` を掛けて twist_mux を迂回しないようにしています。
 - rf2o は起動時に base_footprint → laser_frame の TF を読むので、robot_state_publisher より後に起動すること（bringup では自動）。
+
+## 下り段差（階段）の検出
+
+`cugo_perception` の `cliff_detector` が RealSense D455 の点群から下り段差を見つけ、Nav2 の
+`cliff_layer`（近くの障害物マップと全体の障害物マップの両方）に障害物として入れる。
+Web UI では検出したセルがオレンジで表示される。`use_cliff:=false` で止められる。
+
+- 毎フレーム、近くの床に平面を当て、その平面からの高さで判定する（床や車体の傾き、カメラ調整のずれに強くするため）
+- 低い面の点は、視線が床の高さを横切る位置へ移してから印を付ける（段差の縁の陰になる部分の補正）
+- 誤検出を減らす工夫: 遠いほど閾値を深くする（`drop_per_meter`）。崖セルは隣に崖セルが 2 つ以上あるものだけ残す（`min_neighbors`）
+- 検出できないもの: 深さが返らない段差（真っ暗な吹き抜け・黒い床・直射日光）、カメラの手前約 0.3 m より近い所。
+  確実に避けたい階段は Web UI の「進入禁止」でも囲うこと

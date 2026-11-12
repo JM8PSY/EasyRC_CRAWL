@@ -146,7 +146,7 @@ local_costmap:
       # 要実測: 車体外形（base_footprint 基準、x 前方 / y 左）[m]。仮: 0.54 x 0.48
       footprint: "[[0.27, 0.24], [0.27, -0.24], [-0.27, -0.24], [-0.27, 0.24]]"
       footprint_padding: 0.03
-      plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "voxel_layer", "cliff_layer", "inflation_layer"]
       # 進入禁止エリア（Web UI で描く。cugo_web が /costmap_filter_info と /keepout_mask を出す）
       filters: ["keepout_filter"]
       keepout_filter:
@@ -191,6 +191,32 @@ local_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.2
           expected_update_rate: 0.0
+      # 下り段差（階段など）。cugo_perception の cliff_detector が RealSense の点群から作る。
+      # 床より低い面が見えたセルを /cliff/points で障害物にし、平らな床が見えたセルは
+      # /cliff/floor で消す（voxel_layer の点群のレイでは消えないよう層を分けている）
+      cliff_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        footprint_clearing_enabled: False
+        observation_sources: cliff floor
+        cliff:
+          topic: /cliff/points
+          data_type: "PointCloud2"
+          marking: True
+          clearing: False
+          min_obstacle_height: 0.0
+          max_obstacle_height: 0.5
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+        floor:
+          topic: /cliff/floor
+          data_type: "PointCloud2"
+          marking: False
+          clearing: True
+          min_obstacle_height: 0.0
+          max_obstacle_height: 0.5
+          raytrace_max_range: 2.5
+          raytrace_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -209,7 +235,7 @@ global_costmap:
       footprint_padding: 0.03
       resolution: 0.05
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "voxel_layer", "cliff_layer", "inflation_layer"]
       # 進入禁止エリア（Web UI で描く。cugo_web が /costmap_filter_info と /keepout_mask を出す）
       filters: ["keepout_filter"]
       keepout_filter:
@@ -255,6 +281,32 @@ global_costmap:
           obstacle_max_range: 2.5
           obstacle_min_range: 0.2
           expected_update_rate: 0.0
+      # 下り段差（階段など）。cugo_perception の cliff_detector が RealSense の点群から作る。
+      # 床より低い面が見えたセルを /cliff/points で障害物にし、平らな床が見えたセルは
+      # /cliff/floor で消す（voxel_layer の点群のレイでは消えないよう層を分けている）
+      cliff_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        footprint_clearing_enabled: False
+        observation_sources: cliff floor
+        cliff:
+          topic: /cliff/points
+          data_type: "PointCloud2"
+          marking: True
+          clearing: False
+          min_obstacle_height: 0.0
+          max_obstacle_height: 0.5
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+        floor:
+          topic: /cliff/floor
+          data_type: "PointCloud2"
+          marking: False
+          clearing: True
+          min_obstacle_height: 0.0
+          max_obstacle_height: 0.5
+          raytrace_max_range: 2.5
+          raytrace_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0

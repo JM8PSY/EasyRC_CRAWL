@@ -56,6 +56,7 @@ const world = {
   pose: null, // {x, y, yaw}
   goal: null, // {x, y, yaw}
   scan: [],
+  cliff: [],   // 下り段差のセル中心（map 座標 x,y の並び）
   plan: [],
   keepout: [], // [{id, pts: [[x, y], ...]}] 進入禁止エリア（map 座標）
 };
@@ -240,6 +241,7 @@ function connect() {
     resetInput();
     zeroLeft = 0;
     world.scan = [];
+    world.cliff = [];
     updateCalibUI();
     updateZoneBar();
     requestDraw();
@@ -261,6 +263,10 @@ function handleMessage(msg) {
       );
       world.pose = validPose(msg.pose);
       world.goal = validPose(msg.goal);
+      requestDraw();
+      break;
+    case "cliff":
+      world.cliff = Array.isArray(msg.pts) ? msg.pts : [];
       requestDraw();
       break;
     case "scan":
@@ -412,6 +418,7 @@ function draw() {
 
   drawMapImage();
   drawKeepout();
+  drawCliff();
   if (calib.open) {
     drawHeadingLine();
     drawScanPreview();
@@ -541,6 +548,20 @@ function drawZoneDraft() {
     ctx.stroke();
   });
   ctx.restore();
+}
+
+// 下り段差（RealSense で検出、5cm セル）を橙の四角で描く
+function drawCliff() {
+  const pts = world.cliff;
+  if (!pts.length) return;
+  const half = Math.max(2, 0.025 * view.scale);
+  ctx.fillStyle = "rgba(255, 149, 0, 0.85)";
+  ctx.beginPath();
+  for (let i = 0; i + 1 < pts.length; i += 2) {
+    const [sx, sy] = toScreen(pts[i], pts[i + 1]);
+    ctx.rect(sx - half, sy - half, half * 2, half * 2);
+  }
+  ctx.fill();
 }
 
 function drawScan() {

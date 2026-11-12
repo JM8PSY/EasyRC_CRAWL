@@ -95,6 +95,10 @@ class CugoWebNode(Node):
         self.scan_version = 0
         self.plan_pts: list = []
         self.plan_version = 0
+        self.cliff_pts: list = []      # 下り段差（map 座標の x,y を平らに並べたもの）
+        self.cliff_version = 0
+        self.on_cliff = None  # WebServer が通知関数を入れる
+        self._cliff_warned = 0.0
         # ナビ
         self.nav_state = 'idle'
         self.map_raw: Optional[OccupancyGrid] = None
@@ -130,6 +134,7 @@ class CugoWebNode(Node):
         self.create_subscription(OccupancyGrid, 'map', self._on_map, latched)
         self.create_subscription(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Path, 'plan', self._on_plan, 10)
+        self.create_subscription(PointCloud2, '/cliff/points', self._on_cliff, 5)
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.save_client = (self.create_client(SaveMap, 'slam_toolbox/save_map')
                             if SaveMap else None)
@@ -238,6 +243,32 @@ class CugoWebNode(Node):
                                        msg.range_min, msg.range_max,
                                        t.x, t.y, yaw_from_quat(q.x, q.y, q.z, q.w))
         self.scan_version += 1
+
+    def _on_cliff(self, msg: PointCloud2):
+        """cliff_detector の段差セル（base_footprint）を map 座標にして Web に出す。"""
+        try:
+            xyz = point_cloud2.read_points_numpy(msg, field_names=('x', 'y'), skip_nans=True)
+        except Exception:  # noqa: BLE001
+            return
+        pts: list = []
+        if len(xyz):
+            try:
+                tf = self.tf_buffer.lookup_transform(self.map_frame, msg.header.frame_id, Time())
+            except tf2_ros.TransformException:
+                return
+            t, q = tf.transform.translation, tf.transform.rotation
+            yaw = yaw_from_quat(q.x, q.y, q.z, q.w)
+            c, s_ = math.cos(yaw), math.sin(yaw)
+            x = t.x + c * xyz[:, 0] - s_ * xyz[:, 1]
+            y = t.y + s_ * xyz[:, 0] + c * xyz[:, 1]
+            pts = np.round(np.column_stack([x, y]).ravel(), 3).tolist()
+            now = time.monotonic()
+            if now - self._cliff_warned > 10.0 and self.on_cliff:
+                self._cliff_warned = now
+                self.on_cliff(len(xyz))
+        if pts or self.cliff_pts:
+            self.cliff_pts = pts
+            self.cliff_version += 1
 
     def _on_plan(self, msg: Path):
         self.plan_pts = path_to_points((ps.pose.position.x, ps.pose.position.y)
@@ -586,6 +617,7 @@ class WebServer:
         self.clients: Set[web.WebSocketResponse] = set()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         node.explorer = Explorer(node, self.notify)
+        node.on_cliff = lambda n: self.notify('warn', '下り段差を検出しました（%d セル）。障害物として避けます' % n)
 
     def notify(self, level, text):
         """ROS スレッドからも呼べる通知（全クライアントへ）。"""
@@ -691,7 +723,7 @@ class WebServer:
     async def publisher(self):
         """状態・スキャン・経路・地図を定期配信する。"""
         node = self.node
-        sent = {'map': node.map_version, 'scan': -1, 'plan': -1}
+        sent = {'map': node.map_version, 'scan': -1, 'plan': -1, 'cliff': -1}
         while True:
             await asyncio.sleep(0.2)
             if not self.clients:
@@ -704,6 +736,9 @@ class WebServer:
             if node.scan_version != sent['scan']:
                 sent['scan'] = node.scan_version
                 await self.broadcast({'t': 'scan', 'pts': node.scan_pts})
+            if node.cliff_version != sent['cliff']:
+                sent['cliff'] = node.cliff_version
+                await self.broadcast({'t': 'cliff', 'pts': node.cliff_pts})
             if node.plan_version != sent['plan']:
                 sent['plan'] = node.plan_version
                 await self.broadcast({'t': 'plan', 'pts': node.plan_pts})

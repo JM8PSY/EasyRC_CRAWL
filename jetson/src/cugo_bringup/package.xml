@@ -27,6 +27,7 @@
   <exec_depend>nav2_navfn_planner</exec_depend>
   <exec_depend>twist_mux</exec_depend>
   <exec_depend>cugo_web</exec_depend>
+  <exec_depend>cugo_perception</exec_depend>
   <exec_depend>rviz2</exec_depend>
 
   <export>
