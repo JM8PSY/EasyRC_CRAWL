@@ -51,8 +51,10 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 step "2. udev ルール"
 sudo tee /etc/udev/rules.d/99-cugo.rules >/dev/null <<EOF
 # CuGo: ESP32 と YDLIDAR X4 PRO は同じ CP2102 シリアル番号のため USB ポート位置で区別する
-SUBSYSTEM=="tty", ENV{ID_PATH}=="${ESP32_USB_PATH}", SYMLINK+="cugo_esp32", MODE="0666"
-SUBSYSTEM=="tty", ENV{ID_PATH}=="${LIDAR_USB_PATH}", SYMLINK+="cugo_lidar", MODE="0666"
+# ID_MM_DEVICE_IGNORE: ModemManager がモデムかどうか調べるためにポートを開くと、制御線の操作で
+# ESP32 がリセットを繰り返す（起動直後・抜き差し直後に通信できなくなる）ので触らせない
+SUBSYSTEM=="tty", ENV{ID_PATH}=="${ESP32_USB_PATH}", SYMLINK+="cugo_esp32", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="tty", ENV{ID_PATH}=="${LIDAR_USB_PATH}", SYMLINK+="cugo_lidar", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
 EOF
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=tty

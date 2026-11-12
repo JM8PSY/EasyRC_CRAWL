@@ -43,6 +43,24 @@ def test_silent_device_is_reset_then_reopened():
         os.close(slave)
 
 
+def test_garbage_only_device_is_reset():
+    """ブート ROM の表示やゴミだけ流れていてもプロトコル行が無ければリセットする（実機で発生）。"""
+    master, slave, path = make_pty()
+    link = SerialLink(path, 115200, lambda _l: None, reconnect_interval=0.1,
+                      silence_timeout=0.3)
+    try:
+        link.start()
+        end = time.monotonic() + 1.2
+        while time.monotonic() < end:
+            os.write(master, b'ets Jul 29 2019 12:21:46\r\n\x00p\x8cpp|p\x00\n')
+            time.sleep(0.05)
+        assert link.reset_count >= 1
+    finally:
+        link.stop()
+        os.close(master)
+        os.close(slave)
+
+
 def test_talking_device_is_not_reset():
     master, slave, path = make_pty()
     lines = []

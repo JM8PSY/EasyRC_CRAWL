@@ -3,7 +3,8 @@
 バックグラウンドスレッドで開く・読む・切断時に再接続する（既定 1 秒間隔）。
 受信した行は ``on_line`` コールバックに渡す。例外で落ちることはない。
 
-無応答の検出（silence_timeout 秒、0 で無効）: 開いているのに 1 バイトも届かないときは、
+無応答の検出（silence_timeout 秒、0 で無効）: 開いているのにプロトコル行（``$`` で始まる行）が
+届かないときは（ゴミのバイト列やブート ROM の表示だけが流れている場合も含む）、
 USB 抜き差し・再起動の直後に ESP32 が正常に起動できていないことがある（実機で確認）。
 RTS で EN を Low に 0.1 秒（esptool の hard reset と同じ）してリセットする。
 リセットしても 2 回続けて無応答なら、閉じて開き直す。リセット中は MD20A への出力も 0 になる。
@@ -151,9 +152,10 @@ class SerialLink:
             return
         if not data:
             return
-        self._last_rx = time.monotonic()
-        self._silent_resets = 0
         for line in self._asm.feed(data):
+            if line.startswith('$'):
+                self._last_rx = time.monotonic()
+                self._silent_resets = 0
             try:
                 self._on_line(line)
             except Exception as exc:  # コールバックの不具合でスレッドを殺さない
