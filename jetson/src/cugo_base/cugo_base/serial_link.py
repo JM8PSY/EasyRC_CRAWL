@@ -2,10 +2,16 @@
 
 バックグラウンドスレッドで開く・読む・切断時に再接続する（既定 1 秒間隔）。
 受信した行は ``on_line`` コールバックに渡す。例外で落ちることはない。
+
+無応答の検出（silence_timeout 秒、0 で無効）: 開いているのに 1 バイトも届かないときは、
+USB 抜き差し・再起動の直後に ESP32 が正常に起動できていないことがある（実機で確認）。
+RTS で EN を Low に 0.1 秒（esptool の hard reset と同じ）してリセットする。
+リセットしても 2 回続けて無応答なら、閉じて開き直す。リセット中は MD20A への出力も 0 になる。
 """
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable, Optional
 
 import serial
@@ -16,7 +22,8 @@ from cugo_base.protocol import LineAssembler
 class SerialLink:
     def __init__(self, port: str, baud: int, on_line: Callable[[str], None],
                  reconnect_interval: float = 1.0,
-                 on_event: Optional[Callable[[str], None]] = None) -> None:
+                 on_event: Optional[Callable[[str], None]] = None,
+                 silence_timeout: float = 3.0) -> None:
         self.port = port
         self.baud = baud
         self._on_line = on_line
@@ -30,6 +37,10 @@ class SerialLink:
         self.last_error = ''
         self.connect_count = 0
         self.write_errors = 0
+        self.silence_timeout = silence_timeout
+        self.reset_count = 0
+        self._last_rx = 0.0
+        self._silent_resets = 0
 
     # ---- public ----
 
@@ -69,6 +80,37 @@ class SerialLink:
                 self._stop.wait(self._interval)
                 continue
             self._read_once()
+            self._check_silence()
+
+    def _check_silence(self) -> None:
+        if self.silence_timeout <= 0 or self._ser is None:
+            return
+        if time.monotonic() - self._last_rx < self.silence_timeout:
+            return
+        if self._silent_resets >= 2:
+            self.last_error = 'ESP32 から %d 回リセットしても応答なし' % self._silent_resets
+            self._close()
+            return
+        self._silent_resets += 1
+        self.reset_count += 1
+        self._on_event('ESP32 から %.0f 秒応答がないのでリセットします（%d 回目）'
+                       % (self.silence_timeout, self._silent_resets))
+        self.reset_device()
+        self._last_rx = time.monotonic()  # 起動を待つ
+
+    def reset_device(self) -> None:
+        """EN を Low に 0.1 秒（ESP32 DevKit の自動リセット回路: RTS → EN）。"""
+        with self._lock:
+            ser = self._ser
+            if ser is None:
+                return
+            try:
+                ser.dtr = False
+                ser.rts = True
+                time.sleep(0.1)
+                ser.rts = False
+            except (serial.SerialException, OSError, ValueError) as exc:
+                self.last_error = 'reset: %s' % exc  # pty など制御線の無いポート
 
     def _open(self) -> bool:
         try:
@@ -86,6 +128,8 @@ class SerialLink:
             self.last_error = 'open %s: %s' % (self.port, exc)
             return False
         self._asm.reset()
+        self._last_rx = time.monotonic()
+        self._silent_resets = 0
         with self._lock:
             self._ser = ser
         self.connect_count += 1
@@ -107,6 +151,8 @@ class SerialLink:
             return
         if not data:
             return
+        self._last_rx = time.monotonic()
+        self._silent_resets = 0
         for line in self._asm.feed(data):
             try:
                 self._on_line(line)

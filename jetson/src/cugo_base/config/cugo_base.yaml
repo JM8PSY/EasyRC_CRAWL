@@ -15,3 +15,4 @@ cugo_base_node:
     use_stamped: false      # true なら /cmd_vel を TwistStamped で購読
     status_timeout: 0.5     # $T がこの時間途絶えたら mode=disconnected [s]
     reconnect_interval: 1.0 # シリアル再接続の間隔 [s]
+    silence_reset: 3.0      # ESP32 から何も届かないとき RTS でリセットするまで [s]（0 で無効）

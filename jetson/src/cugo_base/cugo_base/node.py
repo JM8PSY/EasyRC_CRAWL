@@ -73,7 +73,8 @@ class CugoBaseNode(Node):
         self._setup_ros_interfaces()
         self._link = SerialLink(self._param('port'), int(self._param('baud')),
                                 self._on_line, float(self._param('reconnect_interval')),
-                                on_event=lambda msg: self.get_logger().info(msg))
+                                on_event=lambda msg: self.get_logger().info(msg),
+                                silence_timeout=float(self._param('silence_reset')))
         self._link.start()
         self.get_logger().info(
             'cugo_base_node: port=%s baud=%d rate=%.1fHz max_duty=%.2f'
@@ -98,6 +99,7 @@ class CugoBaseNode(Node):
             # 仕様書にない補助パラメータ
             'status_timeout': 0.5,      # $T がこの時間途絶えたら disconnected
             'reconnect_interval': 1.0,  # 再接続の間隔 [s]
+            'silence_reset': 3.0,       # ESP32 から何も届かないときにリセットするまで [s]（0 で無効）
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
