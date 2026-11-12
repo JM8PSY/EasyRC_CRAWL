@@ -1,0 +1,7 @@
+# cugo_perception/scan_inf: LiDAR の「反射なし」0 → +inf、車体に遮られる角度は NaN
+scan_inf:
+  ros__parameters:
+    # 車体（支柱・カメラ・配線など）に遮られる角度 [deg]（laser_frame）。[開始, 終了, 開始, 終了, ...]
+    # 未計測。実機で `ros2 run cugo_perception scan_sectors` を実行し、表示された値を入れる。
+    # [0.0]（2 個未満）なら無し
+    ignore_sectors: [0.0]

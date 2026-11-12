@@ -608,6 +608,8 @@ class CugoWebNode(Node):
                             'slam_toolbox が対応していません）')
             return
         self.map_msg = None
+        if self.explorer is not None:
+            self.explorer.forget()  # 地図の座標が変わるので、覚えた場所は使えない
 
         def done(fut):
             if fut.result() is None:

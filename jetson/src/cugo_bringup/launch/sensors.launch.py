@@ -80,6 +80,8 @@ def generate_launch_description():
         executable='scan_inf',
         name='scan_inf',
         output='screen',
+        parameters=[PathJoinSubstitution(
+            [FindPackageShare('cugo_bringup'), 'config', 'scan_inf.yaml'])],
     )
 
     return LaunchDescription([

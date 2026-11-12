@@ -24,6 +24,7 @@ setup(
         'console_scripts': [
             'cliff_detector = cugo_perception.cliff_node:main',
             'scan_inf = cugo_perception.scan_inf:main',
+            'scan_sectors = cugo_perception.scan_sectors:main',
         ],
     },
 )
