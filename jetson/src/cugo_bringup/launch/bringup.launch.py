@@ -9,7 +9,7 @@ use_base:=false で cugo_base を起動しない（モーターに一切つな�
 use_nav:=false で Nav2 を起動しない（手動で走らせて地図だけ作るとき）。
 """
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EqualsSubstitution, LaunchConfiguration, PathJoinSubstitution
@@ -18,11 +18,17 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def _include(pkg, launch_file, condition=None, args=None):
-    return IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution([FindPackageShare(pkg), 'launch', launch_file])),
+    # include した launch の DeclareLaunchArgument は外に漏れる（例: cugo_base の params_file が
+    # Nav2 の params_file を上書きして Nav2 が cugo_base.yaml を読んでしまう）。
+    # GroupAction（scoped）で include ごとに閉じ込める。
+    return GroupAction(
+        [IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution([FindPackageShare(pkg), 'launch', launch_file])),
+            launch_arguments=(args or {}).items(),
+        )],
         condition=condition,
-        launch_arguments=(args or {}).items(),
+        scoped=True,
     )
 
 
