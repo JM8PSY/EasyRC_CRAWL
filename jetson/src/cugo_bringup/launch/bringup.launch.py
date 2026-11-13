@@ -9,6 +9,7 @@ use_base:=false で cugo_base を起動しない（モーターに一切つな�
 use_nav:=false で Nav2 を起動しない（手動で走らせて地図だけ作るとき）。
 Web UI: ブラウザで http://<JetsonのIP>:8080/（use_web:=false で起動しない）。
 下り段差検出（cugo_perception の cliff_detector）: use_cliff:=false で起動しない。
+RICOH THETA の床検出（theta_floor、自動探索の補助）: use_theta:=false で起動しない。
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
@@ -44,6 +45,7 @@ def generate_launch_description():
     lidar_port = LaunchConfiguration('lidar_port')
     use_web = LaunchConfiguration('use_web')
     use_cliff = LaunchConfiguration('use_cliff')
+    use_theta = LaunchConfiguration('use_theta')
 
     is_slam = IfCondition(EqualsSubstitution(mode, 'slam'))
     is_nav = IfCondition(EqualsSubstitution(mode, 'nav'))
@@ -65,6 +67,8 @@ def generate_launch_description():
                               description='Web UI（http://<JetsonのIP>:8080/）を起動する'),
         DeclareLaunchArgument('use_cliff', default_value='true',
                               description='RealSense の点群で下り段差（階段）を検出し Nav2 の障害物にする'),
+        DeclareLaunchArgument('use_theta', default_value='true',
+                              description='RICOH THETA で前方の床の続きを見て自動探索の判断に使う'),
         DeclareLaunchArgument('base_port', default_value='/dev/cugo_esp32'),
         DeclareLaunchArgument('lidar_port', default_value='/dev/cugo_lidar'),
 
@@ -74,6 +78,9 @@ def generate_launch_description():
         _include('cugo_bringup', 'sensors.launch.py', args={'lidar_port': lidar_port}),
         _include('cugo_bringup', 'odometry.launch.py'),
         _include('cugo_perception', 'cliff_detector.launch.py', IfCondition(use_cliff)),
+        _include('cugo_perception', 'theta_floor.launch.py', IfCondition(use_theta),
+                 {'params_file': PathJoinSubstitution(
+                     [FindPackageShare('cugo_bringup'), 'config', 'theta.yaml'])}),
         _include('cugo_bringup', 'slam.launch.py', is_slam),
         _include('cugo_bringup', 'localization.launch.py', is_nav, {'map': map_yaml}),
         _include('cugo_bringup', 'navigation.launch.py', IfCondition(use_nav)),

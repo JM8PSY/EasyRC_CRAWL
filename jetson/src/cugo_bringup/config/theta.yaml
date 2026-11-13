@@ -1,0 +1,17 @@
+# RICOH THETA S（ライブストリーミングモード: 電源オフからモードボタンを押しながら電源ボタン → LIVE 点灯）
+# 床がどこまで続くかを方位ごとに求め、/theta/floor に出す（自動探索の判断用の地図だけに使う）
+theta_floor:
+  ros__parameters:
+    device: ""               # 空なら /dev/video* から名前に THETA を含むものを探す
+    rate: 2.0                # 処理する回数 [Hz]
+    theta_height: 0.5        # 床からレンズまで [m]。ログの「高さの推定」を見て直す
+    offset_x: 0.0            # base_footprint から見たカメラの位置 [m]
+    offset_y: 0.0
+    front_lens: "left"       # 画面の左右どちらの円が前を向いているか
+    yaw_offset_deg: 0.0      # 前のレンズの光軸のずれ [deg]（左回りが正）
+    fov_deg: 195.0
+    near: 0.6                # これより近くはロボット自身が写るので見ない [m]
+    max_range: 5.0           # これより遠くは使わない [m]
+    sector_deg: 100.0        # 前方 ±この角度の方位だけ /theta/floor に出す
+    color_k: 4.0             # 床とみなす色の差（基準の床のばらつきの何倍まで）
+    clip_to_lidar: true      # LiDAR が手前で当たっている方位はそこで切る

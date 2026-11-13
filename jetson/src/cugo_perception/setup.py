@@ -25,6 +25,7 @@ setup(
             'cliff_detector = cugo_perception.cliff_node:main',
             'scan_inf = cugo_perception.scan_inf:main',
             'scan_sectors = cugo_perception.scan_sectors:main',
+            'theta_floor = cugo_perception.theta_node:main',
         ],
     },
 )

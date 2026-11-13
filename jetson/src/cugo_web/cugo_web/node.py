@@ -149,6 +149,8 @@ class CugoWebNode(Node):
         self.create_subscription(PointCloud2, '/cliff/points', self._on_cliff, 5)
         if self.seen_floor is not None:
             self.create_subscription(PointCloud2, '/cliff/floor', self._on_floor, 5)
+            # RICOH THETA の床（theta_floor）。LiDAR が届かない廊下の奥など
+            self.create_subscription(PointCloud2, '/theta/floor', self._on_floor, 5)
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.save_client = (self.create_client(SaveMap, 'slam_toolbox/save_map')
                             if SaveMap else None)
