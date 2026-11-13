@@ -24,7 +24,7 @@ teleop_twist_keyboard ─ /cmd_vel_teleop（優先）─────────
 
    ```bash
    sudo apt install ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox \
-     ros-jazzy-robot-localization ros-jazzy-realsense2-camera ros-jazzy-xacro ros-jazzy-rviz2 \
+     ros-jazzy-robot-localization ros-jazzy-image-transport-plugins ros-jazzy-xacro ros-jazzy-rviz2 \
      ros-jazzy-twist-mux ros-jazzy-teleop-twist-keyboard ros-jazzy-robot-state-publisher
    ```
 
@@ -80,6 +80,26 @@ bringup を起動すると Web UI も立ち上がる（`use_web:=false` で無�
 - 「目的地」→ 地図をタップ（ドラッグで向き）で Nav2 のゴール、「中止」で取り消し
 - 「地図保存」で `~/maps/<名前>.yaml`（mode:=slam のとき）
 - 停止ボタン / Space: 0 を送り、ゴールも取り消す。タブ切替・切断でも止まる
+
+### Tailscale で入る（自宅などから）
+
+```bash
+bash ~/EasyRC_CRAWL/jetson/scripts/setup_tailscale.sh   # 1 回だけ（途中で sudo）
+```
+
+1. スクリプトが公式インストーラ（`https://tailscale.com/install.sh`）で入れ、`sudo tailscale up` を実行する。
+   表示されたログイン URL をブラウザで開いてログインする（自分で `sudo tailscale up` を打っても同じ）。
+2. 管理画面（https://login.tailscale.com/admin/machines）でこの Jetson の「Disable key expiry」を押す
+   （押さないと 180 日ごとに再ログインが必要）。
+3. Mac / スマホにも Tailscale を入れ、同じアカウントでログインする。
+4. `sudo systemctl restart cugo`。Web UI の自己署名証明書に Tailscale の IP（100.x）と MagicDNS 名が
+   足りなければ、起動時に 1 回だけ作り直される（`journalctl -u cugo` に「証明書に … が無いので作り直します」）。
+   証明書が変わるので、ブラウザでは一度だけ「詳細設定 → 進む」を押す。
+5. `ssh jetson@<100.x>`、Web UI は `http://<100.x>:8080/` または `https://<100.x>:8443/`
+   （`tailscale ip -4` で確認）。
+
+**Tailscale Funnel は使わないこと。** Web UI には認証がなく、Funnel で公開すると誰でもロボットを動かせる。
+tailnet の中からだけ使う。
 
 ### 地図を作る（mode:=slam）
 
@@ -221,11 +241,11 @@ ros2 topic echo /cugo/mode
 
 ## 7. 既知の問題・注意
 
-- **D455 の IMU が出ない**: この Jetson のカーネル（6.8 tegra、`CONFIG_HID_SENSOR_HUB` 無効）には
-  HID センサーのドライバがなく、apt 版 librealsense（V4L バックエンド）では IMU が使えません
-  （ログに `No HID info provided, IMU is disabled`）。`/camera/camera/imu` は出ず、EKF は rf2o と /wheel_odom だけで動きます。
-  IMU を使うには librealsense を RSUSB バックエンド（`-DFORCE_RSUSB_BACKEND=ON`）でビルドして
-  realsense2_camera もそれでビルドし直すか、HID センサーのカーネルモジュールを用意する必要があります。
+- **D455 の IMU**: この Jetson のカーネル（6.8 tegra、`CONFIG_HID_SENSOR_HUB` 無効）には HID センサーの
+  ドライバがなく、apt 版 librealsense（V4L バックエンド）では IMU が出ません（`No HID info provided, IMU is disabled`）。
+  そのため librealsense を RSUSB バックエンド + CUDA でソースからビルドし、realsense-ros も `~/cugo_ws` でビルドします
+  （apt 版は削除）。手順は `scripts/build_realsense.sh` の先頭（deps → build → install → ros → check）。
+  戻し方も同じ場所に書いてあります。
 - Jetson（ARM）の librealsense では点群フィルタのパラメータ名が `pointcloud__neon_.*` になります（`sensors.launch.py` で対応済み）。
 - Jazzy の navigation_launch.py は docking_server の `cmd_vel` をリマップしないので、`navigation.launch.py` で
   `SetRemap(cmd_vel → cmd_vel_nav)` を掛けて twist_mux を迂回しないようにしています。

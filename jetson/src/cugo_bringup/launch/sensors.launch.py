@@ -59,6 +59,9 @@ def generate_launch_description():
             'decimation_filter.filter_magnitude': 2,
             'clip_distance': 4.0,             # 4m 以遠の深度は使わない
             'align_depth.enable': False,
+            # Web UI の映像（/video.mjpg）用 JPEG。既定 95 だと 1 枚 ~75KB（10fps で ~6Mbps）、
+            # 70 で ~29KB（~2.4Mbps）。Tailscale 越しでも見られる量にする
+            '.camera.color.image_raw.compressed.jpeg_quality': 70,
             'initial_reset': False,
         }],
     )

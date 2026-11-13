@@ -41,7 +41,7 @@ step "1. apt パッケージ"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   ros-jazzy-navigation2 ros-jazzy-nav2-bringup ros-jazzy-slam-toolbox \
-  ros-jazzy-robot-localization ros-jazzy-realsense2-camera \
+  ros-jazzy-robot-localization ros-jazzy-image-transport-plugins \
   ros-jazzy-xacro ros-jazzy-rviz2 ros-jazzy-twist-mux ros-jazzy-imu-filter-madgwick \
   ros-jazzy-pointcloud-to-laserscan ros-jazzy-teleop-twist-keyboard \
   ros-jazzy-joint-state-publisher ros-jazzy-robot-state-publisher \
@@ -88,3 +88,4 @@ fi
 
 echo
 echo "完了。新しいターミナルで: source $WS/install/setup.bash"
+echo "RealSense（IMU を使うためソースからビルド）: bash $REPO_DIR/jetson/scripts/build_realsense.sh"
