@@ -10,6 +10,7 @@ aiohttp で静的ファイル（web/）と WebSocket（/ws）を配信し、ROS 
 - 配信: 地図（PNG、変化時・最大 1Hz）、ロボット姿勢・モード・ナビ状態（5Hz）、スキャン（5Hz）、経路
 - カメラ映像: /video.mjpg（MJPEG）。見ている人がいる間だけ video_topic を購読する
 - 自動探索の記録: explore_log:=true（既定）なら 1 回ごとに explore_log_dir/explore_*.jsonl（explog.py）
+  と、終わりにカメラの床セル・最後の /map を explore_*.seen.npz に（falsefree.py。誤って空き率の評価用）
 
 rclpy は別スレッドの executor で回し、aiohttp は main スレッドの asyncio で動かす。
 ROS のコールバックは最新値を保存するだけにして、送信は asyncio 側のループがまとめて行う。
@@ -49,8 +50,8 @@ from ament_index_python.packages import get_package_share_directory
 
 import numpy as np
 
-from cugo_web import calibration, explog, floor, keepout, tls
-from cugo_web.seen import SeenFloor
+from cugo_web import calibration, explog, falsefree, floor, keepout, tls
+from cugo_web.seen import SRC_CLIFF, SRC_THETA, SeenFloor
 from cugo_web.explorer import Explorer
 from cugo_web.geometry import (clamp_drive, occupancy_to_png, path_to_points, png_b64,
                                quat_from_yaw, scan_to_points, valid_map_name, yaw_from_quat)
@@ -154,9 +155,11 @@ class CugoWebNode(Node):
         self.create_subscription(Path, 'plan', self._on_plan, 10)
         self.create_subscription(PointCloud2, '/cliff/points', self._on_cliff, 5)
         if self.seen_floor is not None:
-            self.create_subscription(PointCloud2, '/cliff/floor', self._on_floor, 5)
+            self.create_subscription(PointCloud2, '/cliff/floor',
+                                     lambda m: self._on_floor(m, SRC_CLIFF), 5)
             # RICOH THETA の床（theta_floor）。LiDAR が届かない廊下の奥など
-            self.create_subscription(PointCloud2, '/theta/floor', self._on_floor, 5)
+            self.create_subscription(PointCloud2, '/theta/floor',
+                                     lambda m: self._on_floor(m, SRC_THETA), 5)
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.save_client = (self.create_client(SaveMap, 'slam_toolbox/save_map')
                             if SaveMap else None)
@@ -273,29 +276,33 @@ class CugoWebNode(Node):
                                        t.x, t.y, yaw_from_quat(q.x, q.y, q.z, q.w))
         self.scan_version += 1
 
-    def _cloud_to_map_xy(self, msg: PointCloud2, exact: bool = False) -> Optional[np.ndarray]:
+    def _cloud_to_map_xy(self, msg: PointCloud2, exact: bool = False,
+                         with_origin: bool = False):
         """点群の x, y を map 座標の (N, 2) にする。読めない・TF が無いときは None（点が 0 個なら空）。
 
         exact=True なら撮影時刻の姿勢を使い、無ければ None（最新の姿勢で代用しない）。
         旋回中に最新の姿勢を使うと、2 m 先で数十 cm ずれて壁の向こうまで「床」になるため。
+        with_origin=True なら (xy, 点群の座標系の原点の map 座標 (x, y) か None) を返す（評価の記録用）。
         """
+        none = (None, None) if with_origin else None
         try:
             xyz = point_cloud2.read_points_numpy(msg, field_names=('x', 'y'), skip_nans=True)
         except Exception:  # noqa: BLE001
-            return None
+            return none
         if not len(xyz):
-            return np.zeros((0, 2))
+            return (np.zeros((0, 2)), None) if with_origin else np.zeros((0, 2))
         stamp = Time.from_msg(msg.header.stamp) if exact else Time()
         try:
             tf = self.tf_buffer.lookup_transform(self.map_frame, msg.header.frame_id, stamp)
         except tf2_ros.TransformException:
-            return None
+            return none
         t, q = tf.transform.translation, tf.transform.rotation
         yaw = yaw_from_quat(q.x, q.y, q.z, q.w)
         c, s_ = math.cos(yaw), math.sin(yaw)
         x = t.x + c * xyz[:, 0] - s_ * xyz[:, 1]
         y = t.y + s_ * xyz[:, 0] + c * xyz[:, 1]
-        return np.column_stack([x, y])
+        xy = np.column_stack([x, y])
+        return (xy, (t.x, t.y)) if with_origin else xy
 
     def _on_cliff(self, msg: PointCloud2):
         """cliff_detector の段差セル（base_footprint）を map 座標にして Web に出す。"""
@@ -313,11 +320,12 @@ class CugoWebNode(Node):
             self.cliff_pts = pts
             self.cliff_version += 1
 
-    def _on_floor(self, msg: PointCloud2):
-        """cliff_detector の床セル（/cliff/floor）を覚える。自動探索の判断用の地図だけに使う。"""
-        xy = self._cloud_to_map_xy(msg, exact=True)
+    def _on_floor(self, msg: PointCloud2, src: int = 0):
+        """cliff_detector の床セル（/cliff/floor）を覚える。自動探索の判断用の地図だけに使う。
+        src（どのカメラか）と見た位置は評価の記録用（falsefree.py）。"""
+        xy, org = self._cloud_to_map_xy(msg, exact=True, with_origin=True)
         if xy is not None and len(xy) and self.seen_floor is not None:
-            self.seen_floor.add(xy)
+            self.seen_floor.add(xy, src, org)
 
     def _video_tick(self):
         viewers = self.video.viewers
@@ -372,6 +380,32 @@ class CugoWebNode(Node):
         }
         config.update(explorer_config)
         return explog.ExploreLog(self.explore_log_dir, config)
+
+    def dump_explore_run(self, log_path: str, records=()):
+        """探索の終わりに、カメラの床セルと最後の /map を <記録>.seen.npz に書く（falsefree.py）。
+        別スレッドで書く（Web のイベントループや探索を止めない）。失敗しても警告だけ。"""
+        msg = self.map_raw
+        snap = self.seen_floor.snapshot() if self.seen_floor is not None else None
+        traj = falsefree.traj_from_records(records)
+
+        def work():
+            try:
+                grid = res = origin = None
+                if msg is not None:
+                    info = msg.info
+                    grid = np.asarray(msg.data, dtype=np.int8).reshape(info.height, info.width)
+                    q = info.origin.orientation
+                    res = info.resolution
+                    origin = (info.origin.position.x, info.origin.position.y,
+                              yaw_from_quat(q.x, q.y, q.z, q.w))
+                path = falsefree.save_run(falsefree.npz_path(log_path), snap, grid, res, origin,
+                                          traj, {'log': os.path.basename(log_path),
+                                                 'map_frame': self.map_frame})
+                self.get_logger().info('explore log: seen floor -> %s' % path)
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().warn('explore log seen dump: %s' % exc)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _map_areas(self):
         """slam_toolbox の /map の既知・空き面積 [m²]（地図が変わったときだけ数え直す）。"""

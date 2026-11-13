@@ -16,6 +16,10 @@ import numpy as np
 # 1 << 31 だと上位 32bit が符号ビットにかかってあふれる
 _OFF = 1 << 30
 
+# どのカメラが見たか（ビットの和。評価用: falsefree.py で出どころ別の誤り率を出す）
+SRC_CLIFF = 1   # RealSense（/cliff/floor）
+SRC_THETA = 2   # RICOH THETA（/theta/floor）
+
 
 def _pack(ix: np.ndarray, iy: np.ndarray) -> np.ndarray:
     return ((ix + _OFF) << 32) | (iy + _OFF)
@@ -33,9 +37,14 @@ class SeenFloor:
         self._lock = threading.Lock()
         self._keys = np.zeros(0, np.int64)    # 並べ替え済みのセル番号
         self._hits = np.zeros(0, np.int32)
+        self._src = np.zeros(0, np.uint8)      # 見たカメラ（SRC_* の和）。評価用
+        self._dist = np.zeros(0, np.float32)   # 見たときのセンサーからの最短距離 [m]（不明は nan）
 
-    def add(self, xy: np.ndarray) -> None:
-        """map 座標の点 (N, 2) を足す。1 回の呼び出しで同じセルは 1 回と数える（1 フレーム = 1 回）。"""
+    def add(self, xy: np.ndarray, src: int = 0, origin=None) -> None:
+        """map 座標の点 (N, 2) を足す。1 回の呼び出しで同じセルは 1 回と数える（1 フレーム = 1 回）。
+
+        src: 見たカメラ（SRC_*）、origin: そのときのセンサーの map 座標 (x, y)。どちらも評価の記録用で、
+        overlay（探索の判断）には使わない。"""
         xy = np.asarray(xy, dtype=float).reshape(-1, 2)
         xy = xy[np.isfinite(xy).all(axis=1)]
         if len(xy) == 0:
@@ -44,28 +53,52 @@ class SeenFloor:
         lim = _OFF - 1
         idx = idx[(np.abs(idx) < lim).all(axis=1)]  # 桁あふれする遠すぎる点は捨てる
         new = np.unique(_pack(idx[:, 0], idx[:, 1]))
+        if origin is not None:
+            nx, ny = _unpack(new)
+            d = np.hypot((nx + 0.5) * self.cell - origin[0],
+                         (ny + 0.5) * self.cell - origin[1]).astype(np.float32)
+        else:
+            d = np.full(len(new), np.nan, np.float32)
         with self._lock:
-            keys, hits = self._keys, self._hits
+            keys, hits, srcs, dist = self._keys, self._hits, self._src, self._dist
             pos = np.searchsorted(keys, new)
             found = np.zeros(len(new), bool)
             if len(keys):
                 found = (pos < len(keys)) & (keys[np.minimum(pos, len(keys) - 1)] == new)
             hits = hits.copy()
             hits[pos[found]] += 1
+            srcs = srcs.copy()
+            srcs[pos[found]] |= np.uint8(src)
+            dist = dist.copy()
+            dist[pos[found]] = np.fmin(dist[pos[found]], d[found])
             fresh = new[~found]
             room = max(0, self.max_cells - len(keys))
             fresh = fresh[:room]  # 満杯なら新しいセルは足さない（覚えたセルは残す）
             if len(fresh):
                 keys = np.concatenate([keys, fresh])
                 hits = np.concatenate([hits, np.ones(len(fresh), np.int32)])
+                srcs = np.concatenate([srcs, np.full(len(fresh), src, np.uint8)])
+                dist = np.concatenate([dist, d[~found][:room]])
                 order = np.argsort(keys, kind='stable')
-                keys, hits = keys[order], hits[order]
-            self._keys, self._hits = keys, hits
+                keys, hits, srcs, dist = keys[order], hits[order], srcs[order], dist[order]
+            self._keys, self._hits, self._src, self._dist = keys, hits, srcs, dist
 
     def clear(self) -> None:
         with self._lock:
             self._keys = np.zeros(0, np.int64)
             self._hits = np.zeros(0, np.int32)
+            self._src = np.zeros(0, np.uint8)
+            self._dist = np.zeros(0, np.float32)
+
+    def snapshot(self) -> dict:
+        """覚えている全セル（min_hits 未満も含む）の写し。評価用（falsefree.save_run）。
+        xy: セル中心の map 座標 (N, 2)、hits、src（SRC_* の和）、dist（見た最短距離、不明は nan）。"""
+        with self._lock:
+            keys, hits, srcs, dist = self._keys, self._hits, self._src, self._dist
+        ix, iy = _unpack(keys)
+        xy = np.column_stack([(ix + 0.5) * self.cell, (iy + 0.5) * self.cell]).reshape(-1, 2)
+        return {'xy': xy, 'hits': hits.copy(), 'src': srcs.copy(), 'dist': dist.copy(),
+                'cell': self.cell, 'min_hits': self.min_hits}
 
     def __len__(self) -> int:
         with self._lock:

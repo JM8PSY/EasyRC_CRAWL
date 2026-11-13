@@ -150,6 +150,13 @@ class Explorer:
                 % (reason, s['time'], s['path'], s['known_final'], s['goals'], s['failures']))
         except Exception as exc:  # noqa: BLE001
             self._warn('explore log: %s' % exc)
+        # カメラの床セルと最後の /map を記録の隣に（falsefree.py。誤って空き率の評価用）
+        dump = getattr(self.node, 'dump_explore_run', None)
+        if dump is not None and getattr(log, 'path', None):
+            try:
+                dump(log.path, list(getattr(log, 'records', ())))
+            except Exception as exc:  # noqa: BLE001
+                self._warn('explore log seen dump: %s' % exc)
 
     def _wait(self, what: Optional[str]) -> None:
         """地図・姿勢が無くて待つ間を記録する（変わったときだけ）。what=None で待ち終わり。"""
