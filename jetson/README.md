@@ -282,3 +282,31 @@ Web UI では検出したセルがオレンジで表示される。`use_cliff:=f
 
 LiDAR が車体に遮られる角度は `ros2 run cugo_perception scan_sectors` で調べ、
 `cugo_bringup/config/scan_inf.yaml` の `ignore_sectors` に入れる（遮られた方向を「遠くまで何もない」として障害物を消さないため）。
+
+## 自動探索の記録と比較（評価用）
+
+自動探索を 1 回始めるごとに `~/cugo_logs/explore_YYYYmmdd_HHMMSS.jsonl` に記録する（`cugo_web/explog.py`）。
+1 行目が設定（`use_camera_floor`、`/theta/floor`・`/cliff/floor` の発行者数 = THETA・D455 の床を実際に使ったか、
+境界の選び方の重みなど）、あとは 1 秒ごとの姿勢・走行距離・既知面積（slam_toolbox の `/map` だけで数える）、
+目的地の選択と結果、終了理由。1 行ごとに書き出すので途中で落ちてもそこまでは残る。
+
+```bash
+# 方法ごとに名前を付けて起動し、Web UI で「自動探索」を押す（同じ場所・同じ出発点から、地図リセット後に）
+CUGO_ARGS="mode:=slam explore_variant:=cam"                              # 既定（D455 + THETA の床を使う）
+CUGO_ARGS="mode:=slam explore_variant:=lidar use_camera_floor:=false"    # LiDAR だけ
+CUGO_ARGS="mode:=slam explore_variant:=d455 use_theta:=false"            # THETA なし
+# 記録をやめる: explore_log:=false、置き場所: explore_log_dir:=/path
+
+# PC にコピーして比べる（matplotlib があれば --plot でグラフ）
+scp 'jetson@thisisjetson.local:cugo_logs/explore_*.jsonl' logs/
+python3 jetson/scripts/explog_report.py --group --csv runs.csv --plot area.png logs/*.jsonl
+```
+
+表の列: time（探索時間）、path（走行距離。1 秒で 1 m 以上の位置の飛びは除く）、area（最後の既知面積）、
+m2/m（増えた面積 / 走行距離）、goals・fail（目的地の数・失敗数）、back（引き返し: 続く目的地の向きが 120° 超変わった回数）、
+cam（SLAM では未知でカメラの床で空きだった目的地の数）、t50・t90（最後の面積の 50%・90% に届いた時刻）、stop（終了理由）。
+
+終了理由（stop）: `completed`（境界が無い・残りは小さすぎる）、`no_frontiers:<内訳>`（境界は残るが行ける目的地が無い。
+`visited` = 行っても見えなかった未知（ガラスなど）、`blacklisted` = Nav2 の失敗・時間切れが続いた、`unreachable`、
+`no_start` = ロボットの周りに安全な空きが無い、`too_close`）、`user_stop`、`manual_drive`、`manual_goal`、`error`、`shutdown`。
+「探索が途中で終わる」ときは、この内訳と直前の `result`（aborted / rejected / timeout）を見る。

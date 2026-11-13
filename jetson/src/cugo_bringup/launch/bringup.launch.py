@@ -46,6 +46,9 @@ def generate_launch_description():
     use_web = LaunchConfiguration('use_web')
     use_cliff = LaunchConfiguration('use_cliff')
     use_theta = LaunchConfiguration('use_theta')
+    # Web UI（自動探索）へそのまま渡す。include は scoped なので、ここで受けて渡す必要がある
+    web_args = {k: LaunchConfiguration(k) for k in
+                ('use_camera_floor', 'explore_log', 'explore_log_dir', 'explore_variant')}
 
     is_slam = IfCondition(EqualsSubstitution(mode, 'slam'))
     is_nav = IfCondition(EqualsSubstitution(mode, 'nav'))
@@ -69,6 +72,13 @@ def generate_launch_description():
                               description='RealSense の点群で下り段差（階段）を検出し Nav2 の障害物にする'),
         DeclareLaunchArgument('use_theta', default_value='true',
                               description='RICOH THETA で前方の床の続きを見て自動探索の判断に使う'),
+        DeclareLaunchArgument('use_camera_floor', default_value='true',
+                              description='カメラ（D455 / THETA）が床と見たセルを自動探索の判断で空きにする'),
+        DeclareLaunchArgument('explore_log', default_value='true',
+                              description='自動探索を 1 回ごとに explore_log_dir/explore_*.jsonl に記録'),
+        DeclareLaunchArgument('explore_log_dir', default_value='~/cugo_logs'),
+        DeclareLaunchArgument('explore_variant', default_value='',
+                              description='記録に残す方法の名前（explog_report.py で比べるとき用）'),
         DeclareLaunchArgument('base_port', default_value='/dev/cugo_esp32'),
         DeclareLaunchArgument('lidar_port', default_value='/dev/cugo_lidar'),
 
@@ -85,7 +95,8 @@ def generate_launch_description():
         _include('cugo_bringup', 'localization.launch.py', is_nav, {'map': map_yaml}),
         _include('cugo_bringup', 'navigation.launch.py', IfCondition(use_nav)),
         _include('cugo_bringup', 'twist_mux.launch.py'),
-        _include('cugo_web', 'cugo_web.launch.py', IfCondition(use_web), {'map_yaml': map_yaml}),
+        _include('cugo_web', 'cugo_web.launch.py', IfCondition(use_web),
+                 dict({'map_yaml': map_yaml}, **web_args)),
 
         Node(
             condition=IfCondition(use_rviz),

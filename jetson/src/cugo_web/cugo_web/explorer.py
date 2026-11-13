@@ -18,6 +18,11 @@
 - 同じ所が 3 回選ばれたらブラックリスト
 - 途中で周りが見えたときは取り消さずに次の目的地で上書きする（止まらずに走り続ける）
 - 速度は Nav2 の上限（0.3 m/s）と cugo_base / ESP32 の上限に従う
+
+評価用の記録（explog.ExploreLog）:
+- log_factory（node が入れる）があれば、start() で 1 回分の記録を始め、目的地の選択・結果・終了理由を書く。
+  定期の記録（姿勢・面積）は node のタイマーが self.log に書く。記録の失敗で探索は止めない
+- 終了理由は explog.STOP_REASONS。目的地が無くて終わるときは、なぜ無いかの内訳（diagnose_no_goal）も残す
 """
 import math
 import threading
@@ -26,7 +31,7 @@ from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-from cugo_web import frontier, keepout
+from cugo_web import explog, frontier, keepout
 
 GOAL_TIMEOUT = 90.0       # 1 つの目的地にかける最大時間 [s]
 NO_FRONTIER_CONFIRM = 3   # フロンティア無しがこの回数続いたら完了
@@ -50,6 +55,9 @@ class Explorer:
         self._skip = threading.Event()
         self.target: Optional[Tuple[float, float]] = None
         self._thread: Optional[threading.Thread] = None
+        self.log_factory: Optional[Callable[[dict], object]] = None  # config -> ExploreLog | None
+        self.log = None
+        self._waiting: Optional[Tuple[str, float]] = None
 
     # ---- 操作 ----
     def start(self) -> None:
@@ -67,6 +75,7 @@ class Explorer:
         self.prefer = None
         self._picked = []
         self.state = 'running'
+        self._open_log()
         self.notify('info', '自動探索を開始しました')
         self.node.get_logger().info('explore: start')
         self._thread = threading.Thread(target=self._run, name='explorer', daemon=True)
@@ -83,15 +92,98 @@ class Explorer:
         if self.state == 'running':
             self._skip.set()
 
-    def stop(self, reason: Optional[str] = None) -> None:
+    def stop(self, reason: Optional[str] = None, cause: str = 'user_stop') -> None:
+        """cause は記録用の終了理由（explog.STOP_REASONS のどれか）。"""
         if self.state != 'running':
             return
         self._stop.set()
         self.state = 'off'
-        self.node.get_logger().info('explore: stop (%s)' % (reason or 'no reason'))
+        self.node.get_logger().info('explore: stop (%s, %s)' % (cause, reason or 'no reason'))
+        self._close_log(cause, reason or '',
+                        target=list(self.target) if self.target is not None else None)
         self.node.cancel_goal()
         if reason:
             self.notify('warn', reason)
+
+    # ---- 記録（失敗しても探索は続ける）----
+    def config(self) -> dict:
+        """記録用の設定（探索の定数と、境界の選び方の既定値）。"""
+        return {'explorer': {'goal_timeout': GOAL_TIMEOUT,
+                             'no_frontier_confirm': NO_FRONTIER_CONFIRM,
+                             'check_period': CHECK_PERIOD, 'visited_radius': VISITED_RADIUS,
+                             'repeat_radius': REPEAT_RADIUS, 'repeat_limit': REPEAT_LIMIT},
+                'frontier': explog.frontier_defaults()}
+
+    def _warn(self, text: str) -> None:
+        log = self.node.get_logger()
+        getattr(log, 'warn', log.info)(text)
+
+    def _open_log(self) -> None:
+        self.log = None
+        self._waiting = None
+        if self.log_factory is None:
+            return
+        try:
+            self.log = self.log_factory(self.config())
+        except Exception as exc:  # noqa: BLE001
+            self._warn('explore log: %s' % exc)
+        if self.log is not None:
+            self.node.get_logger().info('explore log: %s' % self.log.path)
+
+    def _ev(self, ev: str, **fields) -> None:
+        log = self.log
+        if log is None:
+            return
+        try:
+            log.event(ev, **fields)
+        except Exception as exc:  # noqa: BLE001
+            self._warn('explore log: %s' % exc)
+
+    def _close_log(self, reason: str, detail: str = '', **fields) -> None:
+        log, self.log = self.log, None
+        if log is None:
+            return
+        try:
+            s = log.close(reason, detail, **fields)
+            self.node.get_logger().info(
+                'explore log: %s time=%.0fs path=%.1fm known=%.1fm2 goals=%d failures=%d'
+                % (reason, s['time'], s['path'], s['known_final'], s['goals'], s['failures']))
+        except Exception as exc:  # noqa: BLE001
+            self._warn('explore log: %s' % exc)
+
+    def _wait(self, what: Optional[str]) -> None:
+        """地図・姿勢が無くて待つ間を記録する（変わったときだけ）。what=None で待ち終わり。"""
+        now = time.monotonic()
+        if what is None:
+            if self._waiting is not None:
+                self._ev('wait_end', what=self._waiting[0], dur=round(now - self._waiting[1], 2))
+                self._waiting = None
+            return
+        if self._waiting is None or self._waiting[0] != what:
+            self._waiting = (what, now)
+            self.node.get_logger().info('explore: waiting for %s' % what)
+            self._ev('wait', what=what)
+
+    def _goal_fields(self, goal, grid, res, origin, robot) -> dict:
+        """goal の記録内容。camera_only = SLAM の地図では未知だが、判断用の地図（カメラの床）では空き。"""
+        used = explog.cell_value(grid, res, origin, goal.x, goal.y)
+        raw = None
+        msg = self.node.map_raw
+        if msg is not None:
+            info = msg.info
+            raw_grid = np.asarray(msg.data, dtype=np.int16).reshape(info.height, info.width)
+            raw = explog.cell_value(raw_grid, info.resolution,
+                                    (info.origin.position.x, info.origin.position.y),
+                                    goal.x, goal.y)
+        return {'x': goal.x, 'y': goal.y, 'yaw': goal.yaw, 'dist': goal.distance,
+                'size': goal.size, 'size_m': goal.size * res,
+                'score': getattr(goal, 'score', None),
+                'cx': goal.cx, 'cy': goal.cy, 'n_cand': self.frontiers,
+                'robot': [robot[0], robot[1]],
+                'prefer': list(self.prefer) if self.prefer else None,
+                'cell_slam': raw, 'cell_used': used,
+                'camera_only': raw is not None and raw < 0 and used is not None and used >= 0,
+                'blacklist_n': len(self.blacklist), 'visited_n': len(self.visited)}
 
     # ---- 本体 ----
     def _grid(self):
@@ -121,8 +213,10 @@ class Explorer:
                 g = self._grid()
                 pose = self.node.robot_pose()
                 if g is None or pose is None:
+                    self._wait('map' if g is None else 'pose')
                     self._stop.wait(1.0)
                     continue
+                self._wait(None)
                 grid, res, origin = g
                 robot = (pose['x'], pose['y'])
                 goal = frontier.find_frontier_goal(grid, res, origin, robot, self.blacklist,
@@ -133,20 +227,39 @@ class Explorer:
                     self.blacklist.append((goal.x, goal.y))
                     self.node.get_logger().info('explore: (%.2f, %.2f) picked %d times -> blacklist'
                                                 % (goal.x, goal.y, REPEAT_LIMIT))
+                    self._ev('blacklist', x=goal.x, y=goal.y, cause='repeat')
                     continue
                 if goal is None:
                     if moving:
                         self.node.cancel_goal()
                         moving = False
                     empty += 1
-                    self.node.get_logger().info('explore: no frontier goal (%d/%d, frontiers=%s)'
-                                                % (empty, NO_FRONTIER_CONFIRM, self.frontiers))
+                    diag = None
+                    if self.log is not None or empty >= NO_FRONTIER_CONFIRM:
+                        try:  # なぜ目的地が無いか（本当に完了か、行けないだけか）
+                            diag = explog.diagnose_no_goal(grid, res, origin, robot,
+                                                           self.blacklist, self.visited,
+                                                           candidates=self.frontiers)
+                        except Exception as exc:  # noqa: BLE001
+                            self._warn('explore: diagnose failed: %s' % exc)
+                    self.node.get_logger().info(
+                        'explore: no frontier goal (%d/%d, frontiers=%s, cause=%s)'
+                        % (empty, NO_FRONTIER_CONFIRM, self.frontiers,
+                           diag['cause'] if diag else '?'))
+                    self._ev('no_goal', n=empty, robot=[robot[0], robot[1]], diag=diag)
                     if empty >= NO_FRONTIER_CONFIRM:
                         self.state = 'done'
-                        self.node.get_logger().info('explore: done')
+                        reason = explog.stop_reason_for(diag)
+                        self.node.get_logger().info('explore: done (%s, %s)' % (reason, diag))
+                        self._close_log(reason, 'no frontier goal %d times' % empty, diag=diag)
                         self.frontiers = 0
-                        self.notify('info', '自動探索が完了しました（未探索の境界がありません）。'
-                                            '「地図保存」で保存できます')
+                        if reason == 'completed':
+                            self.notify('info', '自動探索が完了しました（未探索の境界がありません）。'
+                                                '「地図保存」で保存できます')
+                        else:  # 境界は残っているが行けない（障害物・Nav2 の失敗・自己位置など）
+                            self.notify('warn', '自動探索を終了しました: 境界は残っていますが'
+                                                '行ける目的地がありません（原因: %s）'
+                                        % (diag['cause'] if diag else '不明'))
                         return
                     self._stop.wait(2.0)  # 地図の更新を待ってもう一度
                     continue
@@ -155,12 +268,20 @@ class Explorer:
                 self.node.get_logger().info(
                     'explore: goal (%.2f, %.2f) size=%d dist=%.2f score=%.2f'
                     % (goal.x, goal.y, goal.size, goal.distance, getattr(goal, 'score', 0.0)))
+                if self.log is not None:
+                    self._ev('goal', **self._goal_fields(goal, grid, res, origin, robot))
                 t0 = time.monotonic()
                 result = self._go(goal, res)
                 self.node.get_logger().info('explore: %s after %.1fs'
                                             % (result, time.monotonic() - t0))
                 if self._stop.is_set():
                     return
+                if self.log is not None:
+                    end = self.node.robot_pose()
+                    self._ev('result', result=result, dur=round(time.monotonic() - t0, 2),
+                             goal=[goal.x, goal.y],
+                             blacklisted=result in ('aborted', 'rejected', 'timeout', 'skipped'),
+                             robot=[end['x'], end['y']] if end else None)
                 moving = result == 'explored'
                 if result in ('succeeded', 'explored'):
                     self.visited.append((goal.x, goal.y))
@@ -176,6 +297,7 @@ class Explorer:
         except Exception as exc:  # noqa: BLE001
             self.node.get_logger().error('explorer: %s' % exc)
             self.state = 'failed'
+            self._close_log('error', repr(exc))
             self.notify('error', '自動探索でエラー: %s' % exc)
 
     def _repeated(self, goal) -> bool:

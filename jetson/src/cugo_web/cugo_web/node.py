@@ -9,6 +9,7 @@ aiohttp で静的ファイル（web/）と WebSocket（/ws）を配信し、ROS 
 - 地図保存: {"t":"save_map"} → slam_toolbox の save_map（~/maps/<name>.yaml / .pgm）
 - 配信: 地図（PNG、変化時・最大 1Hz）、ロボット姿勢・モード・ナビ状態（5Hz）、スキャン（5Hz）、経路
 - カメラ映像: /video.mjpg（MJPEG）。見ている人がいる間だけ video_topic を購読する
+- 自動探索の記録: explore_log:=true（既定）なら 1 回ごとに explore_log_dir/explore_*.jsonl（explog.py）
 
 rclpy は別スレッドの executor で回し、aiohttp は main スレッドの asyncio で動かす。
 ROS のコールバックは最新値を保存するだけにして、送信は asyncio 側のループがまとめて行う。
@@ -48,7 +49,7 @@ from ament_index_python.packages import get_package_share_directory
 
 import numpy as np
 
-from cugo_web import calibration, floor, keepout, tls
+from cugo_web import calibration, explog, floor, keepout, tls
 from cugo_web.seen import SeenFloor
 from cugo_web.explorer import Explorer
 from cugo_web.geometry import (clamp_drive, occupancy_to_png, path_to_points, png_b64,
@@ -121,6 +122,11 @@ class CugoWebNode(Node):
         self.zones = keepout.load(self.keepout_file)
         self._zone_seq = len(self.zones)
         self.explorer = None  # WebServer が作る（通知先が必要なため）
+        # 自動探索の評価用の記録（explog.py）。explore_variant は比べるときの名前（例: "cam_off"）
+        self.explore_log = bool(p('explore_log', True).value)
+        self.explore_log_dir = str(p('explore_log_dir', '~/cugo_logs').value)
+        self.explore_variant = str(p('explore_variant', '').value)
+        self._area_cache = (None, 0.0, 0.0)  # (map_raw, 既知 m², 空き m²)
         self.goal: Optional[dict] = None
         self._goal_handle = None
 
@@ -162,6 +168,8 @@ class CugoWebNode(Node):
         self.video = FrameHub()
         self._video_sub = None
         self.create_timer(1.0, self._video_tick)
+        if self.explore_log:
+            self.create_timer(float(p('explore_log_period', 1.0).value), self._explore_log_tick)
 
         # 実機調整（LiDAR の取付向き）
         self.xacro_file = str(p('xacro_file', '').value) or os.path.join(
@@ -190,7 +198,7 @@ class CugoWebNode(Node):
         v, w = clamp_drive(v, w, self.max_v, self.max_w)
         if (v or w) and self.explorer is not None and self.explorer.state == 'running':
             self.get_logger().info('manual drive v=%.3f w=%.3f stops exploration' % (v, w))
-            self.explorer.stop('手動で操縦したので自動探索をやめました')
+            self.explorer.stop('手動で操縦したので自動探索をやめました', cause='manual_drive')
         with self._lock:
             self._drive = (v, w)
             self._drive_stamp = time.monotonic()
@@ -340,6 +348,58 @@ class CugoWebNode(Node):
         return {'x': round(t.x, 3), 'y': round(t.y, 3),
                 'yaw': round(yaw_from_quat(q.x, q.y, q.z, q.w), 3)}
 
+    # ---------------- 自動探索の記録 ----------------
+    def new_explore_log(self, explorer_config: dict):
+        """Explorer.start() から呼ばれる。1 回分の記録を始める（設定の写しを 1 行目に書く）。"""
+        pubs = {}
+        for topic in ('/cliff/floor', '/theta/floor', '/map'):
+            try:
+                pubs[topic] = self.count_publishers(topic)
+            except Exception:  # noqa: BLE001
+                pubs[topic] = None
+        msg = self.map_raw
+        config = {
+            'variant': self.explore_variant,
+            'use_camera_floor': self.use_camera_floor,
+            # 床を出しているノードが実際にいるか（use_theta 相当: /theta/floor の発行者が 1 以上）
+            'publishers': pubs,
+            'use_theta': bool(self.use_camera_floor and pubs.get('/theta/floor')),
+            'use_cliff_floor': bool(self.use_camera_floor and pubs.get('/cliff/floor')),
+            'seen_floor': ({'cell': self.seen_floor.cell, 'min_hits': self.seen_floor.min_hits}
+                           if self.seen_floor is not None else None),
+            'map_resolution': msg.info.resolution if msg is not None else None,
+            'keepout_zones': len(self.zones),
+        }
+        config.update(explorer_config)
+        return explog.ExploreLog(self.explore_log_dir, config)
+
+    def _map_areas(self):
+        """slam_toolbox の /map の既知・空き面積 [m²]（地図が変わったときだけ数え直す）。"""
+        msg = self.map_raw
+        if msg is None:
+            return None
+        if self._area_cache[0] is not msg:
+            known, free = explog.map_areas(np.asarray(msg.data, dtype=np.int16),
+                                           msg.info.resolution)
+            self._area_cache = (msg, known, free)
+        return self._area_cache[1], self._area_cache[2]
+
+    def _explore_log_tick(self):
+        ex = self.explorer
+        log = ex.log if ex is not None else None
+        if log is None:
+            return
+        try:
+            pose = self.robot_pose()
+            areas = self._map_areas()
+            if pose is None or areas is None:
+                return
+            seen = len(self.seen_floor) if self.seen_floor is not None else 0
+            log.sample(pose['x'], pose['y'], pose['yaw'], areas[0], areas[1], seen,
+                       nf=ex.frontiers, nav=self.nav_state)
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn('explore log sample: %s' % exc)
+
     # ---------------- ナビ ----------------
     @staticmethod
     def _parse_goal(x, y, yaw):
@@ -421,7 +481,7 @@ class CugoWebNode(Node):
             notify('error', 'Nav2 が起動していません')
             return
         if self.explorer is not None:
-            self.explorer.stop('目的地が指定されたので自動探索をやめました')
+            self.explorer.stop('目的地が指定されたので自動探索をやめました', cause='manual_goal')
 
         def on_result(status):
             notify({'succeeded': 'info'}.get(status, 'warn'),
@@ -687,6 +747,8 @@ class WebServer:
         self.clients: Set[web.WebSocketResponse] = set()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         node.explorer = Explorer(node, self.notify)
+        if node.explore_log:
+            node.explorer.log_factory = node.new_explore_log
         node.on_cliff = lambda n: self.notify('warn', '下り段差を検出しました（%d セル）。障害物として避けます' % n)
 
     def notify(self, level, text):
@@ -871,6 +933,11 @@ def main(args=None):
     finally:
         try:
             node._publish(0.0, 0.0)  # 念のため停止指令
+        except Exception:  # noqa: BLE001
+            pass
+        try:  # 探索中なら記録を閉じる（通知は asyncio が終わっているので出さない）
+            if node.explorer is not None:
+                node.explorer.stop(None, cause='shutdown')
         except Exception:  # noqa: BLE001
             pass
         executor.shutdown()
