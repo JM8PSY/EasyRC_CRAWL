@@ -8,6 +8,7 @@ aiohttp で静的ファイル（web/）と WebSocket（/ws）を配信し、ROS 
 - 目的地: {"t":"goal"} → Nav2 の navigate_to_pose アクション
 - 地図保存: {"t":"save_map"} → slam_toolbox の save_map（~/maps/<name>.yaml / .pgm）
 - 配信: 地図（PNG、変化時・最大 1Hz）、ロボット姿勢・モード・ナビ状態（5Hz）、スキャン（5Hz）、経路
+- カメラ映像: /video.mjpg（MJPEG）。見ている人がいる間だけ video_topic を購読する
 
 rclpy は別スレッドの executor で回し、aiohttp は main スレッドの asyncio で動かす。
 ROS のコールバックは最新値を保存するだけにして、送信は asyncio 側のループがまとめて行う。
@@ -35,7 +36,7 @@ from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.msg import CostmapFilterInfo
 from nav_msgs.msg import OccupancyGrid, Path
-from sensor_msgs.msg import LaserScan, PointCloud2
+from sensor_msgs.msg import CompressedImage, LaserScan, PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import String
 import tf2_ros
@@ -49,6 +50,7 @@ from cugo_web import calibration, floor, keepout, tls
 from cugo_web.explorer import Explorer
 from cugo_web.geometry import (clamp_drive, occupancy_to_png, path_to_points, png_b64,
                                quat_from_yaw, scan_to_points, valid_map_name, yaw_from_quat)
+from cugo_web.video import FrameHub, make_mjpeg_handler
 
 try:
     from slam_toolbox.srv import SaveMap
@@ -81,6 +83,10 @@ class CugoWebNode(Node):
         self.max_w = float(p('max_angular', 1.5).value)
         self.drive_timeout = float(p('drive_timeout', 0.3).value)
         self.map_dir = os.path.expanduser(str(p('map_dir', '~/maps').value))
+        # カメラ映像（realsense2_camera の JPEG をそのまま MJPEG で送る）
+        self.video_topic = str(p('video_topic',
+                                 '/camera/camera/color/image_raw/compressed').value)
+        self.video_fps = float(p('video_fps', 10.0).value)
 
         self._lock = threading.Lock()
         # 手動操縦
@@ -142,6 +148,10 @@ class CugoWebNode(Node):
         self._last_map_encode = 0.0
         self._pending_map: Optional[OccupancyGrid] = None
         self.create_timer(0.5, self._encode_map_tick)
+        # カメラ映像。見ている人がいる間だけ購読する（付け外しは 1Hz のタイマーで）
+        self.video = FrameHub()
+        self._video_sub = None
+        self.create_timer(1.0, self._video_tick)
 
         # 実機調整（LiDAR の取付向き）
         self.xacro_file = str(p('xacro_file', '').value) or os.path.join(
@@ -270,6 +280,21 @@ class CugoWebNode(Node):
         if pts or self.cliff_pts:
             self.cliff_pts = pts
             self.cliff_version += 1
+
+    def _video_tick(self):
+        viewers = self.video.viewers
+        if viewers > 0 and self._video_sub is None:
+            self._video_sub = self.create_subscription(
+                CompressedImage, self.video_topic, self._on_video, qos_profile_sensor_data)
+            self.get_logger().info('video: subscribe %s' % self.video_topic)
+        elif viewers == 0 and self._video_sub is not None:
+            self.destroy_subscription(self._video_sub)
+            self._video_sub = None
+            self.get_logger().info('video: unsubscribe (no viewers)')
+
+    def _on_video(self, msg: CompressedImage):
+        if 'jpeg' in msg.format:  # png などはブラウザの MJPEG では出せないので捨てる
+            self.video.put(bytes(msg.data))
 
     def _on_plan(self, msg: Path):
         self.plan_pts = path_to_points((ps.pose.position.x, ps.pose.position.y)
@@ -757,9 +782,11 @@ class WebServer:
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
+        self.node.video.bind(self.loop)
         app = web.Application()
         app.router.add_get('/', self.index)
         app.router.add_get('/ws', self.ws_handler)
+        app.router.add_get('/video.mjpg', make_mjpeg_handler(self.node.video, self.node.video_fps))
         # --symlink-install だと web/ の中身がシンボリックリンクになるので follow_symlinks が必要
         app.router.add_static('/', self.node.web_dir, show_index=False, follow_symlinks=True)
         runner = web.AppRunner(app, access_log=None)

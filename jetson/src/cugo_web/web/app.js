@@ -1151,6 +1151,55 @@ window.addEventListener("blur", () => {
   if (had && !joy.active) driveTick();
 });
 
+// ==== カメラ映像（/video.mjpg）====
+// 見ている間だけ接続する（サーバーは視聴者がいる間だけカメラのトピックを購読する）
+const CAM_TIMEOUT_MS = 5000; // これだけ待っても映らなければ「映像なし」
+const CAM_NONE = "映像なし（カメラが動いていない可能性）";
+const cam = { open: false, timer: null };
+
+function camStart() {
+  const img = $("cam");
+  $("cam-msg").textContent = "";
+  clearTimeout(cam.timer);
+  cam.timer = setTimeout(() => {
+    // load が来ないブラウザもあるので、映っていれば出さない
+    if (img.naturalWidth > 0) return;
+    $("cam-msg").textContent = CAM_NONE;
+  }, CAM_TIMEOUT_MS);
+  img.src = `/video.mjpg?t=${Date.now()}`; // 毎回別の URL にしてキャッシュを使わせない
+}
+
+function camStop() {
+  clearTimeout(cam.timer);
+  cam.timer = null;
+  $("cam").removeAttribute("src"); // 接続を切る → サーバー側の配信も終わる
+}
+
+function setCam(on) {
+  cam.open = on;
+  $("cam-panel").hidden = !on;
+  $("btn-cam").classList.toggle("on", on);
+  if (on && !document.hidden) camStart();
+  else camStop();
+}
+
+$("cam").addEventListener("load", () => {
+  clearTimeout(cam.timer);
+  $("cam-msg").textContent = "";
+});
+$("cam").addEventListener("error", () => {
+  // 配信が途切れた（サーバーの再起動など）
+  if (cam.open && $("cam").hasAttribute("src")) $("cam-msg").textContent = CAM_NONE;
+});
+$("btn-cam").addEventListener("click", () => setCam(!cam.open));
+// タブを隠している間は映像を止める（裏で受け続けない）
+document.addEventListener("visibilitychange", () => {
+  if (!cam.open) return;
+  if (document.hidden) camStop();
+  else camStart();
+});
+window.addEventListener("pagehide", camStop);
+
 // ==== タブ非表示で停止 ====
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {

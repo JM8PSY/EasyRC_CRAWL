@@ -26,6 +26,10 @@
     <main id="view" class="view">
       <canvas id="map"></canvas>
       <div id="nomap" class="nomap">地図を待っています…</div>
+      <div id="cam-panel" class="cam-panel" hidden>
+        <img id="cam" alt="">
+        <span id="cam-msg" class="cam-msg"></span>
+      </div>
       <div id="goal-hint" class="goal-hint" hidden>地図をタッチして目的地を指定（ドラッグで向き）</div>
       <div id="keepout-bar" class="keepout-bar" hidden>
         <p class="keepout-help">地図をタップして角を追加（3点以上）</p>
@@ -78,6 +82,7 @@
         <button id="btn-calib" type="button">LiDAR補正</button>
         <button id="btn-reset" type="button">地図リセット</button>
         <button id="btn-keepout" type="button">進入禁止</button>
+        <button id="btn-cam" type="button">カメラ</button>
       </nav>
 
       <section class="sliders">

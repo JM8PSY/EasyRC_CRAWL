@@ -149,6 +149,39 @@ header {
 }
 .goal-hint[hidden] { display: none; }
 
+/* ---- カメラ映像（地図の右上に重ねる。縦長の画面では幅いっぱい）---- */
+.cam-panel {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: min(360px, 45%);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid #ffffff22;
+  box-shadow: 0 2px 12px #000a;
+  pointer-events: none; /* 下の地図の操作を邪魔しない */
+}
+.cam-panel[hidden] { display: none; }
+.cam-panel img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3; /* 最初のフレームが来る前も枠を出す */
+  max-height: 45vh;
+  object-fit: contain;
+}
+.cam-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.cam-msg:empty { display: none; }
+
 /* ---- 進入禁止エリアの作図ツールバー（地図の上部に重ねる）---- */
 .keepout-bar {
   position: absolute;
@@ -298,6 +331,11 @@ header {
 #btn-explore.on { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 700; }
 #btn-keepout { color: #ff8a80; }
 #btn-keepout.on { background: #b62324; border-color: #b62324; color: #fff; font-weight: 700; }
+
+/* 縦長・狭い画面（スマホ縦向き）ではカメラ映像を幅いっぱいに */
+@media (orientation: portrait), (max-width: 599px) {
+  .cam-panel { top: 0; left: 0; right: 0; width: 100%; border-radius: 0; border: none; }
+}
 
 .sliders { padding: 0 12px; }
 .slider {
