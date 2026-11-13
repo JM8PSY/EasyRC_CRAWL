@@ -17,6 +17,7 @@ import asyncio
 import json
 import math
 import os
+import signal
 import threading
 import time
 from typing import Optional, Set
@@ -27,6 +28,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
                        qos_profile_sensor_data)
+from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 
 from action_msgs.msg import GoalStatus
@@ -782,6 +784,11 @@ class WebServer:
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
+        # SIGINT（ros2 launch / systemd の停止）と SIGTERM でこのタスクを止める。
+        # rclpy の既定のハンドラだと ROS だけ止まって aiohttp が動き続け、プロセスが終わらなかった
+        task = asyncio.current_task()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            self.loop.add_signal_handler(sig, task.cancel)
         self.node.video.bind(self.loop)
         app = web.Application()
         app.router.add_get('/', self.index)
@@ -808,13 +815,15 @@ class WebServer:
         try:
             await self.publisher()
         finally:
+            self.node.video.close()  # 開いている /video.mjpg を終わらせる（cleanup が待たないように）
             for ws in list(self.clients):
                 await ws.close()
             await runner.cleanup()
 
 
 def main(args=None):
-    rclpy.init(args=args)
+    # シグナルは WebServer.run（asyncio）で受ける
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = CugoWebNode()
     executor = MultiThreadedExecutor(num_threads=2)
     executor.add_node(node)
@@ -823,7 +832,7 @@ def main(args=None):
     server = WebServer(node)
     try:
         asyncio.run(server.run())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         pass
     finally:
         try:

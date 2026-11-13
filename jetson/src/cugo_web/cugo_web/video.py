@@ -33,6 +33,7 @@ class FrameHub:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._cond: Optional[asyncio.Condition] = None
         self._notify_task: Optional[asyncio.Task] = None
+        self._closed = False
 
     def bind(self, loop: asyncio.AbstractEventLoop) -> None:
         """待つ側が動く asyncio のループを登録する（そのループの中から呼ぶ）。"""
@@ -42,6 +43,20 @@ class FrameHub:
     @property
     def viewers(self) -> int:
         return self._viewers
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    def close(self) -> None:
+        """サーバー終了時に呼ぶ。待っている配信を起こして終わらせる（どのスレッドからでも可）。"""
+        self._closed = True
+        loop = self._loop
+        if loop is not None:
+            try:
+                loop.call_soon_threadsafe(self._wake)
+            except RuntimeError:
+                pass
 
     @contextlib.contextmanager
     def viewer(self) -> Iterator[None]:
@@ -87,6 +102,8 @@ class FrameHub:
 
     async def wait_newer(self, version: int, timeout: float) -> Optional[Tuple[int, bytes]]:
         """版番号が version より新しいフレームを待つ。時間切れなら None。"""
+        if self._closed:
+            return None
         got = self._newer(version)
         if got is not None:
             return got
@@ -94,11 +111,11 @@ class FrameHub:
             self.bind(asyncio.get_running_loop())
         try:
             async with self._cond:
-                await asyncio.wait_for(
-                    self._cond.wait_for(lambda: self._newer(version) is not None), timeout)
+                await asyncio.wait_for(self._cond.wait_for(
+                    lambda: self._closed or self._newer(version) is not None), timeout)
         except asyncio.TimeoutError:
             return None
-        return self._newer(version)
+        return None if self._closed else self._newer(version)
 
 
 def _disconnected(request: web.Request) -> bool:
@@ -121,7 +138,7 @@ def make_mjpeg_handler(hub: FrameHub, fps: float, idle_timeout: float = 5.0
             try:
                 await resp.prepare(request)
                 version = 0
-                while True:
+                while not hub.closed:
                     got = await hub.wait_newer(version, idle_timeout)
                     if got is None:
                         # フレームが来ない（カメラが止まっている）。何も送らずに待ち続けるが、

@@ -167,3 +167,34 @@ def test_fps_limit():
             return buf.count(PART_HEAD)
     n = asyncio.run(main())
     assert 4 <= n <= 6, n
+
+
+def test_close_ends_open_streams_quickly():
+    """サーバー終了時: hub.close() で開いたままの配信が終わる（aiohttp の 60 秒待ちにしない）。"""
+    async def main():
+        hub = FrameHub()
+        hub.bind(asyncio.get_running_loop())
+        app = web.Application()
+        app.router.add_get('/video.mjpg', make_mjpeg_handler(hub, 10.0, idle_timeout=5.0))
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get('/video.mjpg')
+            assert await _wait_viewers(hub, 1) == 1
+            t = time.monotonic()
+            hub.close()
+            n = await _wait_viewers(hub, 0, timeout=1.0)
+            resp.close()
+            return n, time.monotonic() - t
+    n, dt = asyncio.run(main())
+    assert n == 0 and dt < 1.0
+
+
+def test_wait_newer_returns_none_after_close():
+    async def main():
+        hub = FrameHub()
+        hub.bind(asyncio.get_running_loop())
+        asyncio.get_running_loop().call_later(0.05, hub.close)
+        t = time.monotonic()
+        got = await hub.wait_newer(0, timeout=5.0)
+        return got, time.monotonic() - t, hub.closed
+    got, dt, closed = asyncio.run(main())
+    assert got is None and dt < 1.0 and closed
