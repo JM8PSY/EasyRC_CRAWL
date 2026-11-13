@@ -5,6 +5,8 @@
 
 安全:
 - 停止ボタン・手動操縦・手動の目的地指定で探索をやめる（node 側から stop() を呼ぶ）
+- カメラが床として見たセル（node.seen_floor）は、地図で未知なら空きとして扱う（判断用の地図だけ。
+  slam_toolbox / Nav2 の地図は変えない。既知のセル、特に占有は変えない）
 - 進入禁止エリア（node.zones）の中は「占有」として扱い、行き先に選ばない。
   移動中の行き先が新しく描いた禁止エリアに入ったら、取り消して次を選ぶ
 - skip() で今の行き先をやめて次へ（ブラックリストに入れる）
@@ -99,6 +101,11 @@ class Explorer:
         info = msg.info
         grid = np.asarray(msg.data, dtype=np.int16).reshape(info.height, info.width)
         origin = (info.origin.position.x, info.origin.position.y)
+        seen = getattr(self.node, 'seen_floor', None)
+        if seen is not None:
+            # カメラが床として見た未知のセルを空きにする（既知のセルは変えない。写しを返す）。
+            # 禁止エリアより先に重ねる → 禁止エリアは必ず「占有」になる
+            grid = seen.overlay(grid, info.resolution, origin)
         zones = list(self.node.zones)
         if zones:
             # 禁止エリアは「占有」にする → その中と、そこに接する境界は選ばれない

@@ -49,6 +49,7 @@ from ament_index_python.packages import get_package_share_directory
 import numpy as np
 
 from cugo_web import calibration, floor, keepout, tls
+from cugo_web.seen import SeenFloor
 from cugo_web.explorer import Explorer
 from cugo_web.geometry import (clamp_drive, occupancy_to_png, path_to_points, png_b64,
                                quat_from_yaw, scan_to_points, valid_map_name, yaw_from_quat)
@@ -107,6 +108,9 @@ class CugoWebNode(Node):
         self.cliff_version = 0
         self.on_cliff = None  # WebServer が通知関数を入れる
         self._cliff_warned = 0.0
+        # カメラが床として見たセル（自動探索の判断用の地図で、未知を空きにする。/map は変えない）
+        self.use_camera_floor = bool(p('use_camera_floor', True).value)
+        self.seen_floor: Optional[SeenFloor] = SeenFloor() if self.use_camera_floor else None
         # ナビ
         self.nav_state = 'idle'
         self.map_raw: Optional[OccupancyGrid] = None
@@ -143,6 +147,8 @@ class CugoWebNode(Node):
         self.create_subscription(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Path, 'plan', self._on_plan, 10)
         self.create_subscription(PointCloud2, '/cliff/points', self._on_cliff, 5)
+        if self.seen_floor is not None:
+            self.create_subscription(PointCloud2, '/cliff/floor', self._on_floor, 5)
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.save_client = (self.create_client(SaveMap, 'slam_toolbox/save_map')
                             if SaveMap else None)
@@ -257,31 +263,51 @@ class CugoWebNode(Node):
                                        t.x, t.y, yaw_from_quat(q.x, q.y, q.z, q.w))
         self.scan_version += 1
 
-    def _on_cliff(self, msg: PointCloud2):
-        """cliff_detector の段差セル（base_footprint）を map 座標にして Web に出す。"""
+    def _cloud_to_map_xy(self, msg: PointCloud2, exact: bool = False) -> Optional[np.ndarray]:
+        """点群の x, y を map 座標の (N, 2) にする。読めない・TF が無いときは None（点が 0 個なら空）。
+
+        exact=True なら撮影時刻の姿勢を使い、無ければ None（最新の姿勢で代用しない）。
+        旋回中に最新の姿勢を使うと、2 m 先で数十 cm ずれて壁の向こうまで「床」になるため。
+        """
         try:
             xyz = point_cloud2.read_points_numpy(msg, field_names=('x', 'y'), skip_nans=True)
         except Exception:  # noqa: BLE001
+            return None
+        if not len(xyz):
+            return np.zeros((0, 2))
+        stamp = Time.from_msg(msg.header.stamp) if exact else Time()
+        try:
+            tf = self.tf_buffer.lookup_transform(self.map_frame, msg.header.frame_id, stamp)
+        except tf2_ros.TransformException:
+            return None
+        t, q = tf.transform.translation, tf.transform.rotation
+        yaw = yaw_from_quat(q.x, q.y, q.z, q.w)
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        x = t.x + c * xyz[:, 0] - s_ * xyz[:, 1]
+        y = t.y + s_ * xyz[:, 0] + c * xyz[:, 1]
+        return np.column_stack([x, y])
+
+    def _on_cliff(self, msg: PointCloud2):
+        """cliff_detector の段差セル（base_footprint）を map 座標にして Web に出す。"""
+        xy = self._cloud_to_map_xy(msg)
+        if xy is None:
             return
         pts: list = []
-        if len(xyz):
-            try:
-                tf = self.tf_buffer.lookup_transform(self.map_frame, msg.header.frame_id, Time())
-            except tf2_ros.TransformException:
-                return
-            t, q = tf.transform.translation, tf.transform.rotation
-            yaw = yaw_from_quat(q.x, q.y, q.z, q.w)
-            c, s_ = math.cos(yaw), math.sin(yaw)
-            x = t.x + c * xyz[:, 0] - s_ * xyz[:, 1]
-            y = t.y + s_ * xyz[:, 0] + c * xyz[:, 1]
-            pts = np.round(np.column_stack([x, y]).ravel(), 3).tolist()
+        if len(xy):
+            pts = np.round(xy.ravel(), 3).tolist()
             now = time.monotonic()
             if now - self._cliff_warned > 10.0 and self.on_cliff:
                 self._cliff_warned = now
-                self.on_cliff(len(xyz))
+                self.on_cliff(len(xy))
         if pts or self.cliff_pts:
             self.cliff_pts = pts
             self.cliff_version += 1
+
+    def _on_floor(self, msg: PointCloud2):
+        """cliff_detector の床セル（/cliff/floor）を覚える。自動探索の判断用の地図だけに使う。"""
+        xy = self._cloud_to_map_xy(msg, exact=True)
+        if xy is not None and len(xy) and self.seen_floor is not None:
+            self.seen_floor.add(xy)
 
     def _video_tick(self):
         viewers = self.video.viewers
@@ -637,6 +663,8 @@ class CugoWebNode(Node):
         self.map_msg = None
         if self.explorer is not None:
             self.explorer.forget()  # 地図の座標が変わるので、覚えた場所は使えない
+        if self.seen_floor is not None:
+            self.seen_floor.clear()  # 床として見たセルも同じ理由で消す
 
         def done(fut):
             if fut.result() is None:
