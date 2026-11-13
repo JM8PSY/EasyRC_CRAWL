@@ -310,3 +310,22 @@ cam（SLAM では未知でカメラの床で空きだった目的地の数）、
 `visited` = 行っても見えなかった未知（ガラスなど）、`blacklisted` = Nav2 の失敗・時間切れが続いた、`unreachable`、
 `no_start` = ロボットの周りに安全な空きが無い、`too_close`）、`user_stop`、`manual_drive`、`manual_goal`、`error`、`shutdown`。
 「探索が途中で終わる」ときは、この内訳と直前の `result`（aborted / rejected / timeout）を見る。
+
+### 「反射なし」の境界の割合（実験 2-1 / 2-2）
+
+安い 2D LiDAR（X4 PRO、10 m）では、廊下の奥（届かない）・ガラス・黒い壁など反射が返らない方向に面した境界が多く、
+境界の選び方を迷わせる。これを数えるため、`noreturn_period`（既定 2 秒、0 で無効）ごとに、生の `/map` の境界
+（frontier.py と同じ定義・同じかたまりの絞り込み）を最新の `/scan` 1 回分で分類して sample の `noreturn` に書く
+（`cugo_web/noreturn.py`。LiDAR の姿勢はスキャン時刻の TF、無ければ最新）。
+
+- `noreturn`: 境界セルの方位 ±`noreturn_tol_deg`（1.5°）のビームが全部「反射なし」（+inf・0・range_max 超）
+- `hit`: どれかのビームが境界の手前か境界 + `noreturn_pass_margin`（0.3 m）以内で当たる（物陰。近すぎる -inf も含む）
+- `passed`: 当たったビームが全部境界の 0.3 m より先（地図の更新遅れなど。反射なしには数えない）
+- `unobserved`: range_max + `noreturn_range_slack`（0.3 m）より遠い、スキャンの角度の外、またはビームが NaN（車体で遮る角度）
+
+かたまりは、見えているセルの 50% 以上が `noreturn` なら `noreturn`。目的地を選んだときも同じ計算をして、
+goal に `goal_noreturn`（目的地に最も近い境界セルのかたまりのラベル）を書く（2-2: 無駄な目的地との相関用）。
+explog_report.py の列: `nrC`・`nrK`（見えている境界のうち反射なしのセル・かたまりの割合の平均）、`nrG`（反射なしの
+かたまりを選んだ目的地の割合）。全境界のうちの割合（`nr_cells_all` など）は CSV に出る。
+LiDAR だけの比較は `use_camera_floor:=false explore_variant:=lidar` で。1 回のスキャンで地図全体を判定するので、
+別の場所から見た境界は「今の位置から見えるか」だけで分類される点に注意。

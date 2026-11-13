@@ -182,7 +182,16 @@ class Explorer:
             raw = explog.cell_value(raw_grid, info.resolution,
                                     (info.origin.position.x, info.origin.position.y),
                                     goal.x, goal.y)
-        return {'x': goal.x, 'y': goal.y, 'yaw': goal.yaw, 'dist': goal.distance,
+        nr = None  # 目的地の境界が LiDAR の「反射なし」の方向か（node.noreturn_goal、評価用）
+        nr_fn = getattr(self.node, 'noreturn_goal', None)
+        if nr_fn is not None:
+            try:
+                nr = nr_fn(goal.x, goal.y)
+            except Exception as exc:  # noqa: BLE001
+                self._warn('explore log: noreturn: %s' % exc)
+        return {'goal_noreturn': nr['cluster'] if nr else None,
+                'goal_noreturn_cell': nr['cell'] if nr else None,
+                'x': goal.x, 'y': goal.y, 'yaw': goal.yaw, 'dist': goal.distance,
                 'size': goal.size, 'size_m': goal.size * res,
                 'score': getattr(goal, 'score', None),
                 'cx': goal.cx, 'cy': goal.cy, 'n_cand': self.frontiers,

@@ -33,6 +33,9 @@ COLUMNS = [  # (見出し, summary のキー, 書式)
     ('cam', 'camera_only_goals', '%d'),
     ('t50[s]', 't50', '%.0f'),
     ('t90[s]', 't90', '%.0f'),
+    ('nrC', 'nr_cells', '%.2f'),           # 反射なしの境界セルの割合（見えている境界のうち）の平均
+    ('nrK', 'nr_clusters', '%.2f'),        # 同じくかたまり
+    ('nrG', 'goals_noreturn_frac', '%.2f'),  # 反射なしのかたまりを選んだ目的地の割合
     ('stop', 'stop', '%s'),
 ]
 
@@ -156,7 +159,8 @@ def main(argv=None) -> int:
         print(table(group_means(runs), 'variant'))
     if a.csv:
         keys = (['file', 'variant', 'start'] + [k for _, k, _f in COLUMNS]
-                + ['stop_reason', 'end_cause', 'd50', 'd90', 'jumps'])
+                + ['stop_reason', 'end_cause', 'd50', 'd90', 'jumps', 'nr_cells_all',
+                   'nr_clusters_all', 'nr_samples', 'goals_noreturn', 'goals_labeled'])
         with open(a.csv, 'w', newline='', encoding='utf-8') as f:
             w = csv.writer(f)
             w.writerow(keys)

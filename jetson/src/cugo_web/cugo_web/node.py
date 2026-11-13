@@ -50,7 +50,7 @@ from ament_index_python.packages import get_package_share_directory
 
 import numpy as np
 
-from cugo_web import calibration, explog, falsefree, floor, keepout, tls
+from cugo_web import calibration, explog, falsefree, floor, keepout, noreturn, tls
 from cugo_web.seen import SRC_CLIFF, SRC_THETA, SeenFloor
 from cugo_web.explorer import Explorer
 from cugo_web.geometry import (clamp_drive, occupancy_to_png, path_to_points, png_b64,
@@ -128,6 +128,16 @@ class CugoWebNode(Node):
         self.explore_log_dir = str(p('explore_log_dir', '~/cugo_logs').value)
         self.explore_variant = str(p('explore_variant', '').value)
         self._area_cache = (None, 0.0, 0.0)  # (map_raw, 既知 m², 空き m²)
+        # 「反射なし」の境界の割合（noreturn.py）を noreturn_period 秒ごとに sample に書く（0 で無効）
+        self.scan_msg: Optional[LaserScan] = None
+        self.noreturn_period = float(p('noreturn_period', 2.0).value)
+        self.noreturn_kw = {
+            'tol': math.radians(float(p('noreturn_tol_deg', 1.5).value)),
+            'pass_margin': float(p('noreturn_pass_margin', 0.3).value),
+            'range_slack': float(p('noreturn_range_slack', 0.3).value),
+        }
+        self.noreturn_range_max = float(p('noreturn_range_max', 0.0).value)  # 0: scan の値
+        self._nr_last = 0.0
         self.goal: Optional[dict] = None
         self._goal_handle = None
 
@@ -266,6 +276,7 @@ class CugoWebNode(Node):
         self.map_version += 1
 
     def _on_scan(self, msg: LaserScan):
+        self.scan_msg = msg  # 「反射なし」の境界の評価用（noreturn）
         try:
             tf = self.tf_buffer.lookup_transform(self.map_frame, msg.header.frame_id, Time())
         except tf2_ros.TransformException:
@@ -377,6 +388,8 @@ class CugoWebNode(Node):
                            if self.seen_floor is not None else None),
             'map_resolution': msg.info.resolution if msg is not None else None,
             'keepout_zones': len(self.zones),
+            'noreturn': dict(self.noreturn_kw, period=self.noreturn_period,
+                             range_max=self.noreturn_range_max or None),
         }
         config.update(explorer_config)
         return explog.ExploreLog(self.explore_log_dir, config)
@@ -429,10 +442,54 @@ class CugoWebNode(Node):
             if pose is None or areas is None:
                 return
             seen = len(self.seen_floor) if self.seen_floor is not None else 0
+            extra = {}
+            now = time.monotonic()
+            if self.noreturn_period > 0 and now - self._nr_last >= self.noreturn_period:
+                self._nr_last = now
+                try:
+                    a = self._noreturn_analysis()
+                    if a is not None:
+                        extra['noreturn'] = dict(noreturn.stats_of(a[0]), scan_age=a[1])
+                except Exception as exc:  # noqa: BLE001  評価用なので探索は止めない
+                    self.get_logger().warn('explore log noreturn: %s' % exc)
             log.sample(pose['x'], pose['y'], pose['yaw'], areas[0], areas[1], seen,
-                       nf=ex.frontiers, nav=self.nav_state)
+                       nf=ex.frontiers, nav=self.nav_state, **extra)
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warn('explore log sample: %s' % exc)
+
+    def _noreturn_analysis(self):
+        """生の /map と最新の /scan で境界を分類する（noreturn.analyze）。(Analysis, scan の古さ s)。
+        地図・スキャン・TF が無ければ None。LiDAR の姿勢はスキャン時刻の TF（無ければ最新）。"""
+        msg, scan = self.map_raw, self.scan_msg
+        if msg is None or scan is None:
+            return None
+        try:
+            tf = self.tf_buffer.lookup_transform(self.map_frame, scan.header.frame_id,
+                                                 Time.from_msg(scan.header.stamp))
+        except tf2_ros.TransformException:
+            try:
+                tf = self.tf_buffer.lookup_transform(self.map_frame, scan.header.frame_id, Time())
+            except tf2_ros.TransformException:
+                return None
+        t, q = tf.transform.translation, tf.transform.rotation
+        info = msg.info
+        grid = np.asarray(msg.data, dtype=np.int16).reshape(info.height, info.width)
+        rmax = self.noreturn_range_max if self.noreturn_range_max > 0 else scan.range_max
+        a = noreturn.analyze(grid, info.resolution,
+                             (info.origin.position.x, info.origin.position.y),
+                             (t.x, t.y), yaw_from_quat(q.x, q.y, q.z, q.w),
+                             scan.ranges, scan.angle_min, scan.angle_increment,
+                             scan.range_min, rmax, **self.noreturn_kw)
+        age = (self.get_clock().now() - Time.from_msg(scan.header.stamp)).nanoseconds * 1e-9
+        return a, round(age, 3)
+
+    def noreturn_goal(self, x: float, y: float) -> Optional[dict]:
+        """Explorer が目的地を選んだときに呼ぶ（評価用）。目的地に最も近い境界セル（0.5 m 以内）の
+        {'cluster', 'cell', 'd'}（noreturn.label_near）。無効・計算できなければ None。"""
+        if self.noreturn_period <= 0:
+            return None
+        a = self._noreturn_analysis()
+        return noreturn.label_near(a[0], x, y) if a is not None else None
 
     # ---------------- ナビ ----------------
     @staticmethod

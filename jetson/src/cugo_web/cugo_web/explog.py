@@ -6,8 +6,10 @@
 出来事（"ev"）:
 - meta:      開始時刻、設定（use_camera_floor・境界の選び方の重みなど。node / explorer が渡す dict）
 - sample:    定期（既定 1Hz）。t, 姿勢 x/y/yaw, 走った距離 path, 既知面積 known・空き面積 free [m²]
-             （slam_toolbox の /map だけで数える。カメラの床は含めない）、カメラが床と見たセル数 seen
-- goal:      選んだ目的地（座標・経路距離・点数・候補数・「SLAM では未知だがカメラでは空き」か）
+             （slam_toolbox の /map だけで数える。カメラの床は含めない）、カメラが床と見たセル数 seen、
+             noreturn（noreturn_period ごと。境界のうち LiDAR の反射が無い方向のものの数と割合。noreturn.py）
+- goal:      選んだ目的地（座標・経路距離・点数・候補数・「SLAM では未知だがカメラでは空き」か、
+             goal_noreturn = 目的地の境界のかたまりのラベル noreturn / hit / passed / unobserved）
 - result:    目的地の結果（succeeded / explored / aborted / rejected / timeout / skipped / canceled）と所要時間
 - blacklist: 同じ所が何度も選ばれてブラックリストに入れた
 - no_goal:   目的地が見つからなかった（なぜ無いかの内訳 diag 付き）
@@ -167,7 +169,32 @@ def summarize(records: Sequence[dict]) -> dict:
         d = time_to_fraction(samples, pct / 100.0, key='path')
         out['t%d' % pct] = None if t is None else round(t, 2)
         out['d%d' % pct] = None if d is None else round(d, 3)
+    out.update(noreturn_summary(samples, goals))
     return out
+
+
+def _mean(vals) -> Optional[float]:
+    vals = [v for v in vals if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+
+def noreturn_summary(samples: Sequence[dict], goals: Sequence[dict]) -> dict:
+    """「反射なし」の境界（noreturn.py）のまとめ。sample の noreturn が無い記録ではすべて None / 0。
+    nr_cells / nr_clusters: 反射なしの割合の平均（見えている境界のうち = frac_obs）、*_all は全境界のうち。
+    goals_noreturn: 選んだ目的地のかたまりが反射なしだった数、goals_noreturn_frac はラベルが付いた目的地のうちの割合。"""
+    nr = [s['noreturn'] for s in samples if isinstance(s.get('noreturn'), dict)]
+    labeled = [g for g in goals if g.get('goal_noreturn')]
+    n_nr = sum(1 for g in labeled if g['goal_noreturn'] == 'noreturn')
+    return {
+        'nr_samples': len(nr),
+        'nr_cells': _mean((s.get('cells') or {}).get('frac_obs') for s in nr),
+        'nr_cells_all': _mean((s.get('cells') or {}).get('frac') for s in nr),
+        'nr_clusters': _mean((s.get('clusters') or {}).get('frac_obs') for s in nr),
+        'nr_clusters_all': _mean((s.get('clusters') or {}).get('frac') for s in nr),
+        'goals_noreturn': n_nr,
+        'goals_labeled': len(labeled),
+        'goals_noreturn_frac': round(n_nr / len(labeled), 4) if labeled else None,
+    }
 
 
 def frontier_defaults() -> dict:
