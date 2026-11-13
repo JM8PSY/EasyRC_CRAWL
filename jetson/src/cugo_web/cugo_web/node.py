@@ -574,6 +574,10 @@ class CugoWebNode(Node):
 
         def after():
             notify('info', 'LiDAR の向きを %+.0f° にしました（保存済み）' % math.degrees(yaw))
+            # slam_toolbox と rf2o は起動時に一度だけ LiDAR の取付向きを読む。
+            # 再起動しないと地図は古い向きで作られ続け、costmap とずれる（2026-11-13 に実機で発生）
+            notify('warn', '地図づくり（slam_toolbox）と rf2o には再起動まで反映されません。'
+                           'sudo systemctl restart cugo で再起動してください（地図もリセットされます）')
             on_done()
         self.apply_calibration({'lidar_yaw': yaw}, notify, after, 'LiDAR の向き')
 
